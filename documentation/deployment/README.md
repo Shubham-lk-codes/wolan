@@ -26,6 +26,12 @@ NODE_ENV=production
 CORS_ORIGINS=https://wolan-frontend.vercel.app
 ```
 
+Render supplies `PORT` automatically; each API now reads it first and falls back to its service-specific local port. Configure these health-check paths in Render:
+
+- Admin: `/api/v1/public/health`
+- Merchant: `/api/v1/merchant/health`
+- Driver: `/api/v1/driver/health`
+
 The repository's `admin/frontend/.env.production` contains the Vercel build-time URLs. Redeploy the Vercel project after changing any `VITE_*` value because Vite embeds these values during the build.
 
 Release order:

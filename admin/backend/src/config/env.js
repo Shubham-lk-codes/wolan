@@ -10,9 +10,9 @@ const required = (name) => {
   if (!value) throw new Error(`${name} is required`);
   return value;
 };
-const integer = (name, fallback) => {
-  const value = Number.parseInt(process.env[name] ?? String(fallback), 10);
-  if (!Number.isInteger(value) || value < 1 || value > 65535) throw new Error(`${name} must be a valid port`);
+const port = (serviceName, fallback) => {
+  const value = Number.parseInt(process.env.PORT ?? process.env[serviceName] ?? String(fallback), 10);
+  if (!Number.isInteger(value) || value < 1 || value > 65535) throw new Error(`PORT or ${serviceName} must be a valid port`);
   return value;
 };
 
@@ -28,7 +28,7 @@ export const env = Object.freeze({
   nodeEnv,
   isProduction: nodeEnv === 'production',
   isTest,
-  port: integer('ADMIN_PORT', 5000),
+  port: port('ADMIN_PORT', 5000),
   mongoUri,
   mongoDbName,
   jwtAccessSecret: required('JWT_ACCESS_SECRET'),
