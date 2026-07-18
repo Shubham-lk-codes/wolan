@@ -1,8 +1,9 @@
 import axios from 'axios';
+import { adminApiUrl } from '../config/endpoints';
 import { tokenStorage } from './tokenStorage';
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api/v1/admin',
+  baseURL: adminApiUrl,
   headers: { 'Content-Type': 'application/json' },
   timeout: 12_000,
   withCredentials: true,

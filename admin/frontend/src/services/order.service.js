@@ -1,5 +1,6 @@
 import api from './api';
 import axios from 'axios';
+import { publicApiUrl } from '../config/endpoints';
 
 const title = value => String(value || 'PENDING').toLowerCase().split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 const normalizeOrder = payload => {
@@ -37,5 +38,5 @@ export const orderService = {
   async complete(id, otp) { const { data } = await api.patch(`/orders/${encodeURIComponent(id)}/complete`, { otp }); return normalizeOrder(data); },
   async setStatus(id, status, note) { const apiStatus = String(status).trim().toUpperCase().replaceAll(' ', '_'); const { data } = await api.patch(`/orders/${encodeURIComponent(id)}/status`, { status: apiStatus, note }); return normalizeOrder(data); },
   async updateLocation(id, location) { const { data } = await api.patch(`/orders/${encodeURIComponent(id)}/location`, location); return data; },
-  async track(token, signal) { const baseURL = import.meta.env.VITE_PUBLIC_API_URL || '/api/v1/public'; const response = await axios.get(`${baseURL}/tracking/${encodeURIComponent(token)}`, { signal, timeout: 12_000 }); return normalizeOrder(response.data?.data || response.data); },
+  async track(token, signal) { const response = await axios.get(`${publicApiUrl}/tracking/${encodeURIComponent(token)}`, { signal, timeout: 12_000 }); return normalizeOrder(response.data?.data || response.data); },
 };
