@@ -1,0 +1,12 @@
+import { useEffect, useState } from 'react';
+import { orderService } from '../../services/order.service';
+
+export function TrackingPage({ orderId: trackingToken }) {
+  const [order,setOrder]=useState(null); const [loading,setLoading]=useState(true);
+  useEffect(()=>{const controller=new AbortController();orderService.track(trackingToken,controller.signal).then(setOrder).catch(()=>setOrder(null)).finally(()=>setLoading(false));return()=>controller.abort();},[trackingToken]);
+  if (loading) return <main className="public-track"><div className="track-card"><p>Loading secure tracking...</p></div></main>;
+  if (!order) return <main className="public-track"><div className="track-card"><h1>Tracking link unavailable</h1><p>This secure link is invalid, expired, or has been revoked.</p></div></main>;
+  const progress = ['Pending', 'Picked Up', 'At Hub', 'Out for Delivery', 'Delivered'];
+  const current = progress.indexOf(order.status);
+  return <main className="public-track"><header><div className="public-brand"><span>W</span><div><b>WOLAN</b><small>LOGISTICS</small></div></div><span className="secure-label">Secure live tracking</span></header><div className="track-grid"><section className="track-card track-summary"><span className="eyebrow">Package {order.id}</span><h1>{order.status}</h1><p>{order.merchant} is sending a package to {order.customer}.</p><div className="track-progress">{progress.map((item, index) => <div className={index <= current ? 'active' : ''} key={item}><i/>{item}</div>)}</div><div className="eta-panel"><span>Estimated arrival</span><b>{order.status === 'Delivered' ? 'Delivered' : '18-24 minutes'}</b><small>ETA refreshes with the rider location.</small></div><div className="track-people"><div><span>Rider</span><b>{order.rider || 'Assignment pending'}</b><small>Call details protected until dispatch</small></div><div><span>Delivery address</span><b>{order.address}</b><small>{order.zone} zone</small></div></div></section><section className="tracking-map"><div className="map-grid-lines"/><div className="package-pin"><b>Package</b><span>{order.packageTrackingId}</span></div>{order.rider && <div className="rider-pin"><b>Rider</b><span>{order.rider}</span></div>}<div className="map-route"/><div className="map-legend"><span><i className="rider-dot"/> Rider GPS</span><span><i className="package-dot"/> Package GPS</span><b>Location match: Safe</b></div></section></div><footer>Tracking data is shared only for this delivery and expires after completion.</footer></main>;
+}

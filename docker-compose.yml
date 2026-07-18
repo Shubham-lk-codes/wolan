@@ -1,0 +1,61 @@
+services:
+  admin-web:
+    build:
+      context: .
+      dockerfile: admin/frontend/Dockerfile
+    ports: ["8080:80"]
+    depends_on:
+      admin-api: { condition: service_healthy }
+    restart: unless-stopped
+
+  admin-api:
+    build:
+      context: .
+      dockerfile: admin/backend/Dockerfile
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      ADMIN_PORT: 5000
+      REDIS_URL: redis://redis:6379
+    ports: ["5000:5000"]
+    depends_on:
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  merchant-api:
+    build:
+      context: .
+      dockerfile: merchant-backend/Dockerfile
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      MERCHANT_PORT: 5001
+      REDIS_URL: redis://redis:6379
+    ports: ["5001:5001"]
+    depends_on:
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  driver-api:
+    build:
+      context: .
+      dockerfile: driver-backend/Dockerfile
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DRIVER_PORT: 5002
+      REDIS_URL: redis://redis:6379
+    ports: ["5002:5002"]
+    depends_on:
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes: [redis-data:/data]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 10s, timeout: 5s, retries: 10 }
+    restart: unless-stopped
+
+volumes:
+  redis-data:

@@ -1,0 +1,31 @@
+{
+  "name": "@wolan/merchant-backend",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "check": "node --check src/app.js && node --check src/server.js && node --check src/routes/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
+    "@wolan/shared": "2.0.0",
+    "compression": "^1.8.1",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^8.1.0",
+    "ioredis": "^5.8.1",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.19.1",
+    "morgan": "^1.10.1",
+    "socket.io": "^4.8.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": { "mongodb-memory-server": "^10.2.3", "supertest": "^7.1.4" },
+  "engines": { "node": ">=20" }
+}

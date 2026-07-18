@@ -1,0 +1,11 @@
+node_modules/
+.env
+coverage/
+npm-debug.log*
+*.log
+uploads/kyc/*
+!uploads/kyc/.gitkeep
+uploads/logos/*
+uploads/documents/*
+!uploads/logos/.gitkeep
+!uploads/documents/.gitkeep

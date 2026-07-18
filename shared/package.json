@@ -1,0 +1,32 @@
+{
+  "name": "@wolan/shared",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./models": "./models/index.js",
+    "./constants": "./constants/index.js",
+    "./validation": "./validation/index.js",
+    "./middleware": "./middleware/index.js",
+    "./repositories": "./repositories/index.js",
+    "./services": "./services/index.js",
+    "./permissions": "./permissions/index.js",
+    "./events": "./events/index.js",
+    "./utils": "./utils/index.js"
+  },
+  "scripts": {
+    "check": "node --check index.js && node --check models/index.js && node --check services/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.19.1",
+    "zod": "^4.4.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
