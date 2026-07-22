@@ -2,7 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import { IdempotencyKey, User } from '../models/index.js';
-import { SYSTEM_ACTOR_ID } from '../constants/index.js';
+import { normalizeRole, SYSTEM_ACTOR_ID } from '../constants/index.js';
 import { hasPermission, resolveHubScope } from '../permissions/index.js';
 import { AppError } from '../utils/index.js';
 export { validate } from '../validation/index.js';
@@ -24,6 +24,7 @@ export function createAuthenticate({ secret, issuer = 'wolan-logistics', audienc
       if (payload.typ !== 'access') throw new AppError('Invalid access token type', 401, 'INVALID_TOKEN');
       const user = await User.findOne({ _id: payload.sub, deletedAt: null, status: 'ACTIVE' }).select('+tokenVersion');
       if (!user || user.tokenVersion !== payload.ver) throw new AppError('Session is no longer valid', 401, 'SESSION_REVOKED');
+      user.role = normalizeRole(user.role);
       request.user = user;
       request.actor = Object.freeze({ actorId: user._id, role: user.role, hubId: user.hubId });
       next();
@@ -37,6 +38,13 @@ export function createAuthenticate({ secret, issuer = 'wolan-logistics', audienc
 export const authorize = (...permissions) => (request, _response, next) => {
   if (!request.user) return next(new AppError('Authentication required', 401, 'UNAUTHENTICATED'));
   if (!permissions.some((permission) => hasPermission(request.user, permission))) return next(new AppError('Permission denied', 403, 'FORBIDDEN'));
+  return next();
+};
+
+export const authorizeRoles = (...roles) => (request, _response, next) => {
+  if (!request.user) return next(new AppError('Authentication required', 401, 'UNAUTHENTICATED'));
+  const role = normalizeRole(request.user.role);
+  if (!hasPermission(request.user, '*') && !roles.map(normalizeRole).includes(role)) return next(new AppError('Role access denied', 403, 'FORBIDDEN'));
   return next();
 };
 

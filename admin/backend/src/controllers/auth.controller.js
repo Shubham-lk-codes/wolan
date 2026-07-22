@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { HQ_ROLES, ROLES } from '@wolan/shared/constants';
+import { HQ_ROLES, normalizeRole, ROLES } from '@wolan/shared/constants';
 import { AuthService } from '@wolan/shared/services';
 import { AppError, successResponse } from '@wolan/shared/utils';
 import { env } from '../config/env.js';
@@ -35,6 +35,7 @@ const cookie = (name, value, { httpOnly = false, maxAge = 30 * 24 * 60 * 60 } = 
 const clearCookie = (name, httpOnly = false) => cookie(name, '', { httpOnly, maxAge: 0 });
 
 async function requireAdminSession(result) {
+  result.user.role = normalizeRole(result.user.role);
   if (allowedAdminRoles.has(result.user.role)) return result;
   await auth.logout(result.refreshToken);
   throw new AppError('Admin account required', 403, 'ADMIN_ACCOUNT_REQUIRED');

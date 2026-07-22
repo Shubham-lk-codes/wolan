@@ -53,6 +53,14 @@ export class DriverPortalService {
       { $set: { availability: status, updatedBy: context.user._id, lastHeartbeatAt: new Date() } },
       { new: true },
     );
+    if (status === 'OFFLINE') {
+      const notification = await Notification.create({
+        hubId: context.actor.hubId, recipientType: 'HUB', title: 'Driver offline', message: `${driver.name} is now offline and unavailable for dispatch.`,
+        channels: ['IN_APP'], priority: 'HIGH', metadata: { category: 'DRIVER_OFFLINE', driverId: driver._id }, status: 'SENT', sentAt: new Date(),
+        createdBy: context.user._id, updatedBy: context.user._id,
+      }).catch(() => null);
+      if (notification) await this.eventPublisher?.(SOCKET_EVENTS.NEW_NOTIFICATION, notification.toJSON());
+    }
     const tracker = await this.trackerStatus(context, driver);
     return { ...driver.toJSON(), tracker };
   }

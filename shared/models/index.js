@@ -41,6 +41,7 @@ const HubSchema = tenantSchema({
   address: String,
   phone: String,
   email: { type: String, lowercase: true, trim: true },
+  country: { type: String, default: 'Uganda', trim: true },
   city: { type: String, default: 'Kampala' },
   region: { type: String, index: true },
   zoneCoverage: { type: [String], default: [] },
@@ -53,6 +54,7 @@ HubSchema.pre('validate', function applyHubCode() { if (!this.hubId && this.code
 HubSchema.index({ hubId: 1 }, { unique: true });
 HubSchema.index({ code: 1 }, { unique: true });
 HubSchema.index({ slug: 1 }, { unique: true });
+HubSchema.index({ managerId: 1 }, { unique: true, partialFilterExpression: { managerId: { $type: 'objectId' }, deletedAt: null } });
 HubSchema.index({ location: '2dsphere' });
 
 const MerchantSchema = tenantSchema({

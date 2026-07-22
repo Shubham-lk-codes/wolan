@@ -10,6 +10,7 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         '/api': { target: proxyTarget, changeOrigin: true },
+        '/socket.io': { target: proxyTarget, changeOrigin: true, ws: true },
       },
     },
     build: {

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { hubService, riderService } from '../../services/resource.service';
+import { useAuth } from '../../state/AuthContext';
+import { isHubManager } from '../../config/roles';
 
 const initial = { name: '', phone: '', email: '', password: '', hubId: '', yearsExperience: 0, district: '', division: '', specificStage: '', stageChairmanContact: '', vehicleType: 'Moto / Boda Boda', plateNumber: '', nationalId: '', kinName: '', kinPhone: '', kinRelationship: '', legalAccepted: false };
 const cancelled = error => error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError';
@@ -9,6 +11,8 @@ function Field({ label, name, type = 'text', placeholder, required = true, min, 
 }
 
 export function DriverOnboardingModal({ onClose, onCreated }) {
+  const { user } = useAuth();
+  const hubManager = isHubManager(user);
   const submittingRef = useRef(false);
   const [form, setForm] = useState(initial);
   const [hubs, setHubs] = useState([]);
@@ -16,6 +20,12 @@ export function DriverOnboardingModal({ onClose, onCreated }) {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (hubManager) {
+      const assigned = { _id: user.hubId, name: 'Assigned hub', code: user.hubId, city: '' };
+      setHubs([assigned]);
+      setForm(current => ({ ...current, hubId: user.hubId }));
+      return undefined;
+    }
     const controller = new AbortController();
     hubService.list({ status: 'Active' }, controller.signal).then(items => {
       setHubs(items);
@@ -23,7 +33,7 @@ export function DriverOnboardingModal({ onClose, onCreated }) {
       setError('');
     }).catch(loadError => { if (!cancelled(loadError)) setError('Active hubs could not be loaded.'); });
     return () => controller.abort();
-  }, []);
+  }, [hubManager, user?.hubId]);
 
   useEffect(() => {
     const close = event => event.key === 'Escape' && onClose();
@@ -43,7 +53,7 @@ export function DriverOnboardingModal({ onClose, onCreated }) {
     setError('');
     try {
       const payload = {
-        name: form.name.trim(), phone: form.phone.trim(), email: form.email.trim(), password: form.password, hubId: form.hubId,
+        name: form.name.trim(), phone: form.phone.trim(), email: form.email.trim(), password: form.password, ...(hubManager ? {} : { hubId: form.hubId }),
         yearsExperience: Number(form.yearsExperience), district: form.district.trim(), division: form.division.trim(),
         specificStage: form.specificStage.trim(), stageChairmanContact: form.stageChairmanContact.trim(), vehicleType: form.vehicleType,
         plateNumber: form.plateNumber.trim(), nationalId: form.nationalId.trim(),
@@ -67,7 +77,7 @@ export function DriverOnboardingModal({ onClose, onCreated }) {
           <Field label="Phone Number" name="phone" type="tel" placeholder="+256..." value={form.phone} onChange={change} />
           <Field label="Email" name="email" type="email" placeholder="Required for password setup" value={form.email} onChange={change} />
           <Field label="Temporary Password" name="password" type="password" placeholder="Minimum 8 characters" value={form.password} onChange={change} />
-          <Field label="Assigned Hub"><select name="hubId" required value={form.hubId} onChange={change}><option value="">Select active hub</option>{hubs.map(hub => <option value={hub._id} key={hub._id}>{hub.name} - {hub.code} ({hub.city})</option>)}</select></Field>
+          <Field label="Assigned Hub">{hubManager?<input value={user.hubId} readOnly aria-label="Assigned hub"/>:<select name="hubId" required value={form.hubId} onChange={change}><option value="">Select active hub</option>{hubs.map(hub => <option value={hub._id} key={hub._id}>{hub.name} - {hub.code} ({hub.city})</option>)}</select>}</Field>
           <Field label="Years of Experience" name="yearsExperience" type="number" min="0" value={form.yearsExperience} onChange={change} />
           <Field label="District" name="district" placeholder="Kampala" value={form.district} onChange={change} />
           <Field label="Division" name="division" placeholder="Central" value={form.division} onChange={change} />

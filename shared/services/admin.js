@@ -3,12 +3,13 @@ import mongoose from 'mongoose';
 import {
   AuditLog, COD, Customer, Driver, DriverEarning, FinePenalty, GPSDevice, Hub, Incident, KYCDocument, Merchant, Notification, Order, Package, Payment, Payout, Rating, Referral, Report, SecurityAlert, Setting, SupportTicket, Tracking, User, Vehicle, Zone,
 } from '../models/index.js';
-import { ROLES, SYSTEM_ACTOR_ID } from '../constants/index.js';
+import { normalizeRole, ROLES, SYSTEM_ACTOR_ID } from '../constants/index.js';
 import { withTransaction } from '../repositories/index.js';
 import { AppError } from '../utils/index.js';
 import { AuthService, CODService, CrudService } from './index.js';
 
 const generatedCode = (prefix) => `${prefix}_${Date.now().toString(36).toUpperCase()}${randomBytes(2).toString('hex').toUpperCase()}`;
+const generatedPassword = () => `Whm_${randomBytes(9).toString('base64url')}9!`;
 
 export function reportPeriodRange(period = 'MONTHLY', now = new Date(), earliest) {
   const end = new Date(now);
@@ -27,7 +28,7 @@ export function reportPeriodRange(period = 'MONTHLY', now = new Date(), earliest
 const reportStatusLabel = (status) => String(status || '').toLowerCase().split('_').map((word) => word[0]?.toUpperCase() + word.slice(1)).join(' ');
 
 const resourceDefinitions = Object.freeze({
-  hubs: [Hub, { searchFields: ['code', 'name', 'city', 'region'], filterFields: ['status', 'region'] }],
+  hubs: [Hub, { searchFields: ['code', 'name', 'city', 'region'], filterFields: ['status', 'region'], populates: [{ path: 'managerId', select: 'name email phone role status' }] }],
   merchants: [Merchant, { searchFields: ['merchantCode', 'businessName', 'shopName', 'phone'], filterFields: ['status', 'tier', 'kycStatus'] }],
   drivers: [Driver, { searchFields: ['driverCode', 'name', 'phone', 'plateNumber'], filterFields: ['status', 'availability'] }],
   packages: [Package, { searchFields: ['packageTrackingId', 'description', 'sealNumber'], filterFields: ['status', 'custodyStatus'] }],
@@ -284,7 +285,7 @@ export class AdminPortalService {
   listResource(name, scope, query) { return this.resource(name).list(scope, query); }
   getResource(name, id, scope) { return this.resource(name).get(id, scope); }
   updateResource(name, id, scope, input, context) {
-    const changes = name === 'hubs' ? this.prepareHubInput(input) : name === 'drivers' ? this.prepareDriverUpdate(input) : input;
+    const changes = name === 'hubs' ? this.prepareHubInput(input) : name === 'drivers' ? this.prepareDriverUpdate(input) : name === 'merchants' ? this.prepareMerchantUpdate(input) : input;
     return this.resource(name).update(id, scope, changes, context);
   }
   deleteResource(name, id, scope, context) { return this.resource(name).remove(id, scope, context); }
@@ -316,10 +317,7 @@ export class AdminPortalService {
   createResource(name, input, context) {
     if (name === 'merchants') return this.onboardMerchant(input, context);
     if (name === 'drivers') return this.onboardDriver(input, context);
-    if (name === 'hubs') {
-      const hub = this.prepareHubInput(input, { create: true });
-      return this.resource(name).create(hub, { ...context, hubId: hub.hubId });
-    }
+    if (name === 'hubs') return this.createHub(input, context);
     return this.resource(name).create(input, context);
   }
 
@@ -329,17 +327,90 @@ export class AdminPortalService {
     return {
       ...(codeValue ? { code: codeValue, hubId: codeValue } : {}),
       ...(create ? { slug: input.slug || `${String(input.name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${randomBytes(2).toString('hex')}` } : {}),
-      name: input.name, address: typeof input.location === 'string' ? input.location : input.address, city: input.city, region: input.region,
+      name: input.name, address: typeof input.location === 'string' ? input.location : input.address, country: input.country, city: input.city, region: input.region,
       zoneCoverage: input.zone ? [input.zone] : input.zoneCoverage, phone: input.phone, email: input.email, dailyTarget: input.dailyTarget,
       ...(point ? { location: point } : {}),
       ...(input.status ? { status: String(input.status).toUpperCase().replaceAll(' ', '_') } : {}),
     };
   }
 
+  async createHub(input, context) {
+    const hubInput = this.prepareHubInput(input, { create: true });
+    const automaticPassword = input.manager && !input.manager.password ? generatedPassword() : undefined;
+    const managerPassword = input.manager?.password || automaticPassword;
+    const passwordHash = managerPassword ? await AuthService.hashPassword(managerPassword) : undefined;
+
+    return withTransaction(async (session) => {
+      let manager;
+      if (input.managerId) {
+        manager = await User.findOne({ _id: input.managerId, deletedAt: null }).select('+tokenVersion').session(session);
+        if (!manager || normalizeRole(manager.role) !== ROLES.HUB_MANAGER) throw new AppError('Selected Hub Manager was not found', 404, 'HUB_MANAGER_NOT_FOUND');
+        const assignedHub = await Hub.findOne({ managerId: manager._id, deletedAt: null }).select('name code').session(session).lean();
+        if (assignedHub) throw new AppError(`This manager is already assigned to ${assignedHub.name}`, 409, 'HUB_MANAGER_ALREADY_ASSIGNED');
+      } else {
+        manager = await User.create([{
+          hubId: hubInput.hubId,
+          name: input.manager.name,
+          email: input.manager.email?.trim().toLowerCase(),
+          phone: input.manager.phone?.trim(),
+          passwordHash,
+          role: ROLES.HUB_MANAGER,
+          assignedHubIds: [hubInput.hubId],
+          status: 'ACTIVE',
+          createdBy: context.actorId,
+          updatedBy: context.actorId,
+        }], { session }).then(([document]) => document);
+      }
+
+      const hub = await Hub.create([{
+        ...hubInput,
+        managerId: manager._id,
+        hubId: hubInput.hubId,
+        createdBy: context.actorId,
+        updatedBy: context.actorId,
+      }], { session }).then(([document]) => document);
+
+      manager.role = ROLES.HUB_MANAGER;
+      manager.hubId = hub.hubId;
+      manager.assignedHubIds = [hub.hubId];
+      manager.status = 'ACTIVE';
+      manager.updatedBy = context.actorId;
+      await manager.save({ session });
+
+      await Notification.create([{
+        hubId: hub.hubId,
+        recipientType: 'USER',
+        recipientId: manager._id,
+        title: 'Hub Manager access ready',
+        message: `You were assigned to ${hub.name}. Sign in through the existing Admin Login page.`,
+        channels: ['IN_APP'],
+        priority: 'HIGH',
+        status: 'SENT',
+        sentAt: new Date(),
+        createdBy: context.actorId,
+        updatedBy: context.actorId,
+      }], { session });
+
+      return {
+        hub,
+        manager: { _id: manager._id, name: manager.name, email: manager.email, phone: manager.phone, role: manager.role },
+        ...(automaticPassword ? { temporaryPassword: automaticPassword } : {}),
+      };
+    });
+  }
+
   prepareDriverUpdate(input) {
     const allowed = Object.fromEntries(Object.entries(input).filter(([key]) => ['name', 'phone', 'email', 'stage', 'yearsExperience', 'district', 'division', 'stageChairmanContact', 'nextOfKin', 'plateNumber', 'nationalId', 'availability', 'autoAccept', 'securityBond', 'zones', 'status'].includes(key)));
     if (input.locked !== undefined) allowed.status = input.locked ? 'SUSPENDED' : 'ACTIVE';
     if (allowed.availability) allowed.availability = String(allowed.availability).toUpperCase().replaceAll(' ', '_');
+    if (allowed.status) allowed.status = String(allowed.status).toUpperCase().replaceAll(' ', '_');
+    return allowed;
+  }
+
+  prepareMerchantUpdate(input) {
+    const allowed = Object.fromEntries(Object.entries(input).filter(([key]) => ['businessName', 'shopName', 'building', 'phone', 'email', 'ownerName', 'address', 'tier', 'kycStatus', 'status'].includes(key)));
+    if (allowed.tier) allowed.tier = String(allowed.tier).toUpperCase();
+    if (allowed.kycStatus) allowed.kycStatus = String(allowed.kycStatus).toUpperCase();
     if (allowed.status) allowed.status = String(allowed.status).toUpperCase().replaceAll(' ', '_');
     return allowed;
   }
@@ -353,7 +424,8 @@ export class AdminPortalService {
   }
 
   async onboardMerchant(input, context) {
-    const hubId = await this.resolveHubId(input.hubId ?? context.hubId);
+    const requestedHubId = context.role === ROLES.HUB_MANAGER ? context.hubId : input.hubId ?? context.hubId;
+    const hubId = await this.resolveHubId(requestedHubId);
     if (!hubId) throw new AppError('A hub is required', 422, 'HUB_REQUIRED');
     if (!input.password) throw new AppError('A temporary password is required', 422, 'PASSWORD_REQUIRED');
     return withTransaction(async (session) => {
@@ -375,7 +447,8 @@ export class AdminPortalService {
   }
 
   async onboardDriver(input, context) {
-    const hubId = await this.resolveHubId(input.hubId ?? context.hubId);
+    const requestedHubId = context.role === ROLES.HUB_MANAGER ? context.hubId : input.hubId ?? context.hubId;
+    const hubId = await this.resolveHubId(requestedHubId);
     if (!hubId) throw new AppError('A hub is required', 422, 'HUB_REQUIRED');
     if (!input.password && !input.pin) throw new AppError('A temporary password or PIN is required', 422, 'PASSWORD_REQUIRED');
     await this.assertDriverIdentityAvailable(input);

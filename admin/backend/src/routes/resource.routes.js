@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authorize, validate } from '@wolan/shared/middleware';
-import { paginationSchema } from '@wolan/shared/validation';
+import { hubCreateSchema, paginationSchema } from '@wolan/shared/validation';
 import * as controller from '../controllers/resource.controller.js';
 import { flexibleBody, idParams, route } from './route.utils.js';
 
@@ -13,13 +13,14 @@ const resources = [
 export const resourceRoutes = Router();
 
 resourceRoutes.get('/merchants/summary', authorize('merchant:read', 'merchant:*'), route(controller.merchantSummary));
+resourceRoutes.post('/hubs', authorize('hub:create', 'hub:*'), validate(hubCreateSchema), route(controller.resourceCreate('hubs')));
 
 for (const resource of resources) {
   const singular = resource === 'hubs' ? 'hub' : resource.replace(/s$/, '');
   resourceRoutes.get(`/${resource}`, authorize(`${singular}:read`, `${singular}:*`), validate(paginationSchema, 'query'), route(controller.resourceList(resource)));
   resourceRoutes.get(`/${resource}/:id`, authorize(`${singular}:read`, `${singular}:*`), validate(idParams, 'params'), route(controller.resourceGet(resource)));
   if (resource !== 'audit') {
-    if (resource !== 'notifications') {
+    if (resource !== 'notifications' && resource !== 'hubs') {
       resourceRoutes.post(`/${resource}`, authorize(`${singular}:create`, `${singular}:*`), validate(flexibleBody), route(controller.resourceCreate(resource)));
     }
     resourceRoutes.patch(`/${resource}/:id`, authorize(`${singular}:update`, `${singular}:*`), validate(idParams, 'params'), validate(flexibleBody), route(controller.resourceUpdate(resource)));

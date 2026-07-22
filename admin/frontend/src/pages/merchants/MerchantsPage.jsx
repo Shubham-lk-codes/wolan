@@ -46,13 +46,22 @@ function Overview({ merchant }) { return <>
 function Info({icon,label,value}) { return <div className="merchant-info"><i>{icon}</i><p><span>{label}</span><b>{value}</b></p></div>; }
 function DetailPlaceholder({tab, merchant}) { return <div className="merchant-detail-box detail-placeholder"><label>{tab}</label><h3>{merchant.name}</h3><p>The merchant's {tab.toLowerCase()} controls and records appear here.</p><button>Open {tab} Action</button></div>; }
 
-function MerchantDetail({ merchant }) {
+function MerchantActions({merchant,onUpdated}) {
+  const[form,setForm]=useState({businessName:merchant.businessName||merchant.name,shopName:merchant.shopName||'',ownerName:merchant.owner||'',phone:merchant.phone||'',address:merchant.address||'',tier:String(merchant.tier||'Starter').toUpperCase()});
+  const[busy,setBusy]=useState(false),[message,setMessage]=useState('');
+  const change=event=>setForm(current=>({...current,[event.target.name]:event.target.value}));
+  async function save(event){event.preventDefault();setBusy(true);setMessage('');try{const updated=await merchantService.update(merchant._id,form);onUpdated(updated);setMessage('Merchant profile saved.')}catch(error){setMessage(error.response?.data?.message||'Merchant profile could not be saved.')}finally{setBusy(false)}}
+  async function toggle(){setBusy(true);setMessage('');try{const updated=await merchantService.update(merchant._id,{status:merchant.status==='ACTIVE'?'SUSPENDED':'ACTIVE'});onUpdated(updated);setMessage(updated.status==='ACTIVE'?'Merchant activated.':'Merchant deactivated.')}catch(error){setMessage(error.response?.data?.message||'Merchant status could not be changed.')}finally{setBusy(false)}}
+  return <form className="merchant-detail-box merchant-actions-form" onSubmit={save}><label>Edit Merchant</label><input name="businessName" value={form.businessName} onChange={change} placeholder="Business name" required/><input name="shopName" value={form.shopName} onChange={change} placeholder="Shop name"/><input name="ownerName" value={form.ownerName} onChange={change} placeholder="Owner"/><input name="phone" value={form.phone} onChange={change} placeholder="Phone" required/><input name="address" value={form.address} onChange={change} placeholder="Address"/><select name="tier" value={form.tier} onChange={change}>{['STARTER','ACTIVE','PRIORITY','ELITE'].map(value=><option key={value}>{value}</option>)}</select><button disabled={busy}>{busy?'Saving…':'Save Profile'}</button><button type="button" className="merchant-status-action" disabled={busy} onClick={toggle}>{merchant.status==='ACTIVE'?'Deactivate Merchant':'Activate Merchant'}</button>{message&&<small>{message}</small>}</form>;
+}
+
+function MerchantDetail({ merchant, onUpdated }) {
   const [tab,setTab]=useState('Overview');
   return <aside className="merchant-detail">
     <div className="merchant-detail-title"><span className="merchant-initials large">{merchant.initials}</span><div><h2>{merchant.name}</h2><p>{merchant.id.toLowerCase()}a8cded7404136470a</p></div></div>
     <div className="merchant-joined"><span>{merchant.tier}</span><p>Joined {merchant.joined}</p></div>
     <div className="merchant-detail-tabs">{['Overview','Finance','Legal','KYC','Actions'].map(name=><button className={tab===name?'active':''} onClick={()=>setTab(name)} key={name}>{name}</button>)}</div>
-    <div className="merchant-detail-scroll">{tab==='Overview'?<Overview merchant={merchant}/>:<DetailPlaceholder tab={tab} merchant={merchant}/>}</div>
+    <div className="merchant-detail-scroll">{tab==='Overview'?<Overview merchant={merchant}/>:tab==='Actions'?<MerchantActions key={merchant._id} merchant={merchant} onUpdated={onUpdated}/>:<DetailPlaceholder tab={tab} merchant={merchant}/>}</div>
   </aside>;
 }
 
@@ -74,6 +83,7 @@ export function MerchantsPage(){
   const filtered=useMemo(()=>merchants.filter(m=>(tier==='All'||m.tier===tier)&&`${m.name} ${m.owner} ${m.phone}`.toLowerCase().includes(query.toLowerCase())),[tier,query]);
   const selected=merchants.find(m=>m.id===selectedId)||filtered[0];
   function merchantCreated(created){const item=pageMerchant(created);setMerchants(items=>[item,...items]);setSelectedId(item.id);setShowAddMerchant(false);merchantService.summary().then(setSummary).catch(requestError=>setError(getApiError(requestError)))}
+  function merchantUpdated(updated){const item=pageMerchant(updated);setMerchants(items=>items.map(value=>value._id===item._id?item:value));setSelectedId(item.id)}
   const summaryValue=(key,currency)=>summary ? `${Number(summary[key]??0).toLocaleString()}${currency?` ${summary.currency||'UGX'}`:''}` : '—';
   const escalationCount=summary?.eliteEscalations;
   return <div className="merchants-page">
@@ -84,7 +94,7 @@ export function MerchantsPage(){
       <section className="priority-queue"><div><span>Priority Queue</span><h3>Elite merchant escalations</h3></div><em>{escalationCount==null?'Loading…':`${escalationCount} active`}</em><p>{escalationCount>0?`${escalationCount} unresolved ${escalationCount===1?'escalation requires':'escalations require'} support intervention.`:'No active Elite escalations. Open an escalation from an Elite merchant profile when support intervention is needed.'}</p></section>
       <div className="merchant-roster">{filtered.map(m=><MerchantCard merchant={m} selected={selected?.id===m.id} onSelect={()=>setSelectedId(m.id)} key={m.id}/>)}</div>
     </div>
-    {selected&&<MerchantDetail merchant={selected}/>} {showAddMerchant&&<AddMerchantModal onClose={()=>setShowAddMerchant(false)} onCreated={merchantCreated}/>} 
+    {selected&&<MerchantDetail merchant={selected} onUpdated={merchantUpdated}/>} {showAddMerchant&&<AddMerchantModal onClose={()=>setShowAddMerchant(false)} onCreated={merchantCreated}/>}
   </div>;
 }
 

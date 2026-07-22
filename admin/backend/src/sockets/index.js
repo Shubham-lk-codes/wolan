@@ -3,6 +3,7 @@ import { Server } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import IORedis from 'ioredis';
 import { SOCKET_EVENTS, socketRooms } from '@wolan/shared/events';
+import { normalizeRole } from '@wolan/shared/constants';
 import { User } from '@wolan/shared/models';
 
 export function notificationRooms(payload) {
@@ -39,6 +40,7 @@ export async function configureSockets(httpServer, env) {
       if (payload.typ !== 'access') throw new Error('Unauthorized');
       const user = await User.findOne({ _id: payload.sub, deletedAt: null, status: 'ACTIVE' }).select('+tokenVersion');
       if (!user || user.tokenVersion !== payload.ver) throw new Error('Unauthorized');
+      user.role = normalizeRole(user.role);
       socket.data.user = user;
       next();
     } catch { next(new Error('Unauthorized')); }

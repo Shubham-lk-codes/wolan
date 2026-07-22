@@ -1,27 +1,88 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { COD, Merchant, Referral, SupportTicket, User, Vehicle } from '../models/index.js';
+import mongoose from 'mongoose';
+import { COD, Hub, Merchant, Notification, Referral, SupportTicket, User, Vehicle } from '../models/index.js';
 import { AdminPortalService, reportPeriodRange } from '../services/admin.js';
+import { AuthService } from '../services/index.js';
+import { hubCreateSchema } from '../validation/index.js';
 
 test('hub creation keeps its generated operational id instead of the creator hub id', () => {
   const service = new AdminPortalService();
   const creatorContext = { actorId: '507f1f77bcf86cd799439011', hubId: 'HUB_EXISTING' };
-
-  service.resources.hubs = {
-    create(data, context) { return { data, context }; },
-  };
-
-  const result = service.createResource('hubs', {
+  const result = service.prepareHubInput({
     name: 'Pune Hub',
     location: 'Pune',
     city: 'Wardha',
-  }, creatorContext);
+  }, { create: true });
 
-  assert.match(result.data.hubId, /^HUB_[A-Z0-9]+$/);
-  assert.equal(result.data.code, result.data.hubId);
-  assert.equal(result.context.hubId, result.data.hubId);
-  assert.notEqual(result.context.hubId, creatorContext.hubId);
-  assert.equal(result.context.actorId, creatorContext.actorId);
+  assert.match(result.hubId, /^HUB_[A-Z0-9]+$/);
+  assert.equal(result.code, result.hubId);
+  assert.notEqual(result.hubId, creatorContext.hubId);
+});
+
+test('create hub validation requires an operational profile and manager', () => {
+  const valid = {
+    name: 'Ntinda Hub', code: 'NTINDA_02', address: 'Plot 10 Ntinda Road', city: 'Kampala', region: 'Central', country: 'Uganda', zone: 'Ntinda',
+    phone: '+256700000001', email: 'ntinda@example.com', coordinates: { lat: 0.354, lng: 32.612 }, status: 'ACTIVE', dailyTarget: 150,
+    manager: { name: 'Hub Manager', email: 'manager@example.com', phone: '+256700000002' },
+  };
+  assert.equal(hubCreateSchema.safeParse(valid).success, true);
+  assert.equal(hubCreateSchema.safeParse({ ...valid, manager: undefined }).success, false);
+});
+
+test('hub and new manager are created and assigned in one transaction', async t => {
+  const originals = {
+    startSession: mongoose.startSession,
+    hashPassword: AuthService.hashPassword,
+    userCreate: User.create,
+    hubCreate: Hub.create,
+    notificationCreate: Notification.create,
+  };
+  t.after(() => {
+    mongoose.startSession = originals.startSession;
+    AuthService.hashPassword = originals.hashPassword;
+    User.create = originals.userCreate;
+    Hub.create = originals.hubCreate;
+    Notification.create = originals.notificationCreate;
+  });
+  const session = { async withTransaction(work) { await work(); }, async endSession() {} };
+  mongoose.startSession = async () => session;
+  let hashedPassword;
+  AuthService.hashPassword = async value => { hashedPassword = value; return 'hashed-password'; };
+  let managerPayload;
+  let managerSaved = false;
+  User.create = async ([payload], options) => {
+    assert.equal(options.session, session);
+    managerPayload = payload;
+    return [{ ...payload, _id: new mongoose.Types.ObjectId(), async save({ session: saveSession }) { assert.equal(saveSession, session); managerSaved = true; } }];
+  };
+  let hubPayload;
+  Hub.create = async ([payload], options) => {
+    assert.equal(options.session, session);
+    hubPayload = payload;
+    return [{ ...payload, _id: new mongoose.Types.ObjectId() }];
+  };
+  Notification.create = async ([payload], options) => {
+    assert.equal(options.session, session);
+    assert.equal(payload.recipientType, 'USER');
+    return [payload];
+  };
+
+  const service = new AdminPortalService();
+  const result = await service.createHub({
+    name: 'Ntinda Hub', code: 'NTINDA_02', address: 'Plot 10 Ntinda Road', city: 'Kampala', region: 'Central', country: 'Uganda', zone: 'Ntinda',
+    phone: '+256700000001', email: 'ntinda@example.com', coordinates: { lat: 0.354, lng: 32.612 }, status: 'ACTIVE', dailyTarget: 150,
+    manager: { name: 'Hub Manager', email: 'manager@example.com', phone: '+256700000002' },
+  }, { actorId: new mongoose.Types.ObjectId(), role: 'SUPER_ADMIN', hubId: 'HUB_GLOBAL' });
+
+  assert.match(hashedPassword, /^Whm_/);
+  assert.equal(managerPayload.role, 'HUB_MANAGER');
+  assert.equal(managerPayload.hubId, 'NTINDA_02');
+  assert.equal(hubPayload.managerId, result.manager._id);
+  assert.equal(hubPayload.country, 'Uganda');
+  assert.equal(managerSaved, true);
+  assert.equal(result.hub.hubId, 'NTINDA_02');
+  assert.equal(result.temporaryPassword, hashedPassword);
 });
 
 test('merchant summary returns hub-scoped database aggregates', async t => {

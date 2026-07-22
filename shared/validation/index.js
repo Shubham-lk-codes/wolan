@@ -18,7 +18,40 @@ export const paginationSchema = z.object({
   sortBy: z.string().trim().max(50).optional(),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
   status: z.string().trim().max(50).optional(),
+  role: z.enum(SYSTEM_ROLES).optional(),
 }).strict();
+
+const hubManagerAccountSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  email: z.email().optional(),
+  phone: phoneSchema.optional(),
+  password: z.string().min(8).max(128).optional(),
+}).strict().refine((value) => value.email || value.phone, {
+  message: 'Manager email or phone is required',
+});
+
+export const hubCreateSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  code: z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9_-]{1,23}$/, 'Use 2-24 letters, numbers, underscores, or hyphens'),
+  address: z.string().trim().min(3).max(500),
+  city: z.string().trim().min(2).max(120),
+  region: z.string().trim().min(2).max(120),
+  country: z.string().trim().min(2).max(120).default('Uganda'),
+  zone: z.string().trim().min(2).max(120),
+  phone: phoneSchema,
+  email: z.email(),
+  coordinates: z.object({
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+  }).strict(),
+  status: z.enum(['ACTIVE', 'SUSPENDED']).default('ACTIVE'),
+  dailyTarget: z.number().int().min(0).max(100_000).default(150),
+  managerId: objectIdSchema.optional(),
+  manager: hubManagerAccountSchema.optional(),
+}).strict().superRefine((value, context) => {
+  if (!value.managerId && !value.manager) context.addIssue({ code: 'custom', path: ['manager'], message: 'Select or create a Hub Manager' });
+  if (value.managerId && value.manager) context.addIssue({ code: 'custom', path: ['managerId'], message: 'Choose either an existing manager or a new manager' });
+});
 
 export const orderListQuerySchema = paginationSchema.extend({
   orderStatus: z.enum(ORDER_STATUSES).optional(),

@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
-import { LIMITS, ORDER_STATUS, SYSTEM_ACTOR_ID } from '../constants/index.js';
+import { LIMITS, normalizeRole, ORDER_STATUS, SYSTEM_ACTOR_ID, SYSTEM_ROLES } from '../constants/index.js';
 import { SOCKET_EVENTS } from '../events/index.js';
 import { COD, CustodyEvent, DeliveryProof, Driver, Incident, Notification, Order, OTP, OutboxEvent, Package, Payment, SecurityAlert, Session, Tracking, User } from '../models/index.js';
 import { BaseRepository, withTransaction } from '../repositories/index.js';
@@ -55,7 +55,7 @@ export class AuthService {
   }
 
   signAccess(user) {
-    return jwt.sign({ typ: 'access', role: user.role, hubId: user.hubId, ver: user.tokenVersion ?? 0 }, this.config.accessSecret, {
+    return jwt.sign({ typ: 'access', userId: user._id.toString(), role: normalizeRole(user.role), hubId: user.hubId, ver: user.tokenVersion ?? 0 }, this.config.accessSecret, {
       subject: user._id.toString(), expiresIn: this.config.accessExpiresIn, issuer: this.config.issuer, audience: this.config.audience,
     });
   }
@@ -78,6 +78,8 @@ export class AuthService {
       await user.save();
       throw new AppError('Invalid credentials', 401, 'INVALID_CREDENTIALS');
     }
+    user.role = normalizeRole(user.role);
+    if (!SYSTEM_ROLES.includes(user.role)) throw new AppError('Account role is not supported', 403, 'ROLE_NOT_SUPPORTED');
     const familyId = randomUUID();
     const placeholder = secureToken();
     const session = await Session.create({ hubId: user.hubId, userId: user._id, refreshTokenHash: sha256(placeholder), familyId, userAgent: metadata.userAgent, ip: metadata.ip, expiresAt: new Date(Date.now() + durationMs(this.config.refreshExpiresIn, 30 * 86_400_000)), status: 'ACTIVE', createdBy: user._id, updatedBy: user._id });
@@ -103,6 +105,8 @@ export class AuthService {
     }
     const user = await User.findOne({ _id: payload.sub, deletedAt: null, status: 'ACTIVE' }).select('+tokenVersion');
     if (!user || user.tokenVersion !== payload.ver) throw new AppError('Session revoked', 401, 'SESSION_REVOKED');
+    user.role = normalizeRole(user.role);
+    if (!SYSTEM_ROLES.includes(user.role)) throw new AppError('Account role is not supported', 403, 'ROLE_NOT_SUPPORTED');
     const replacement = await Session.create({ hubId: session.hubId, userId: user._id, refreshTokenHash: sha256(secureToken()), familyId: session.familyId, userAgent: metadata.userAgent, ip: metadata.ip, expiresAt: new Date(Date.now() + durationMs(this.config.refreshExpiresIn, 30 * 86_400_000)), status: 'ACTIVE', createdBy: user._id, updatedBy: user._id });
     const nextRefresh = this.signRefresh(user, replacement._id, session.familyId);
     replacement.refreshTokenHash = sha256(nextRefresh);
@@ -221,10 +225,23 @@ export class OrderService {
         hubId: context.hubId, createdBy: context.actorId, updatedBy: context.actorId, status: 'PENDING', eventId: randomUUID(), eventType: SOCKET_EVENTS.ORDER_CREATED,
         aggregateType: 'Order', aggregateId: order._id, payload: { orderId: order._id, hubId: context.hubId, merchantId: order.merchantId },
       }], { session }).then(([document]) => document);
-      return { order, package: packageDocument, outboxEvent };
+      const notifications = await Notification.create([
+        {
+          hubId: context.hubId, recipientType: 'HUB', title: 'New order', message: `${order.orderNumber} entered the hub dispatch queue.`,
+          channels: ['IN_APP'], priority: 'NORMAL', metadata: { category: 'NEW_ORDER', orderId: order._id }, status: 'SENT', sentAt: new Date(),
+          createdBy: context.actorId, updatedBy: context.actorId,
+        },
+        ...(Number(order.codAmount || 0) > 0 ? [{
+          hubId: context.hubId, recipientType: 'HUB', title: 'COD alert', message: `${order.orderNumber} carries UGX ${Number(order.codAmount).toLocaleString()} COD.`,
+          channels: ['IN_APP'], priority: 'HIGH', metadata: { category: 'COD_ALERT', orderId: order._id, amount: order.codAmount }, status: 'SENT', sentAt: new Date(),
+          createdBy: context.actorId, updatedBy: context.actorId,
+        }] : []),
+      ], { session });
+      return { order, package: packageDocument, outboxEvent, notifications };
     });
     await publishOutbox(result.outboxEvent, this.eventPublisher);
-    const { outboxEvent: _outboxEvent, ...response } = result;
+    await Promise.all(result.notifications.map((notification) => this.eventPublisher?.(SOCKET_EVENTS.NEW_NOTIFICATION, notification.toJSON())));
+    const { outboxEvent: _outboxEvent, notifications: _notifications, ...response } = result;
     return { ...response, publicTrackingToken, pickupSecret };
   }
 
@@ -300,9 +317,15 @@ export class OrderService {
         hubId: order.hubId, createdBy: context.actorId, updatedBy: context.actorId, status: 'PENDING', eventId: randomUUID(), eventType: SOCKET_EVENTS.ORDER_STATUS_CHANGED,
         aggregateType: 'Order', aggregateId: order._id, payload: { orderId: order._id, hubId: order.hubId, merchantId: order.merchantId, status: order.orderStatus, merchantSentOffAt: order.merchantSentOffAt },
       }], { session }).then(([document]) => document);
-      return { order, outboxEvent };
+      const notification = nextStatus === ORDER_STATUS.FAILED ? await Notification.create([{
+        hubId: order.hubId, recipientType: 'HUB', title: 'Failed delivery', message: `${order.orderNumber} was marked failed${note ? `: ${note}` : '.'}`,
+        channels: ['IN_APP'], priority: 'HIGH', metadata: { category: 'FAILED_DELIVERY', orderId: order._id, driverId: order.driverId }, status: 'SENT', sentAt: new Date(),
+        createdBy: context.actorId, updatedBy: context.actorId,
+      }], { session }).then(([document]) => document) : null;
+      return { order, outboxEvent, notification };
     });
     await publishOutbox(result.outboxEvent, this.eventPublisher);
+    if (result.notification) await this.eventPublisher?.(SOCKET_EVENTS.NEW_NOTIFICATION, result.notification.toJSON());
     return result.order;
   }
 

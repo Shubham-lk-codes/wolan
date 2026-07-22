@@ -20,5 +20,5 @@ export const publicApiUrl = migrateLegacyEndpoint(
 
 export const adminSocketUrl = migrateLegacyEndpoint(
   import.meta.env.VITE_SOCKET_URL,
-  import.meta.env.DEV ? 'http://localhost:5000' : defaults.socket,
+  import.meta.env.DEV ? globalThis.location?.origin : defaults.socket,
 );

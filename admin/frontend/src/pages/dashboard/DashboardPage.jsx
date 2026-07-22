@@ -4,8 +4,11 @@ import { LiveRiders, RecentOrders } from '../../components/dashboard/Activity';
 import { useCallback } from 'react';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { dashboardService } from '../../services/resource.service';
+import { useAuth } from '../../state/AuthContext';
+import { isHubManager } from '../../config/roles';
+import { HubManagerDashboard } from '../hub-manager/HubManagerDashboard';
 
-export function DashboardPage() {
+function HqDashboard() {
   const loader = useCallback(signal => dashboardService.get(signal), []);
   const { data } = useApiQuery(loader, {});
   return <>
@@ -17,4 +20,9 @@ export function DashboardPage() {
     <PerformanceCards />
     <WeeklyDeliveries />
   </>;
+}
+
+export function DashboardPage() {
+  const { user } = useAuth();
+  return isHubManager(user) ? <HubManagerDashboard /> : <HqDashboard />;
 }

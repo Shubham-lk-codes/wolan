@@ -1,8 +1,9 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { AppShell } from './layouts/AppShell';
 import { useRouter } from './router/Router';
 import { useAuth } from './state/AuthContext';
 import { LoginPage } from './pages/auth/LoginPage';
+import { dashboardPathFor, isHubManager } from './config/roles';
 
 const DashboardPage = lazy(() => import('./pages/dashboard/DashboardPage').then(module => ({ default: module.DashboardPage })));
 const OrdersPage = lazy(() => import('./pages/orders/OrdersPage').then(module => ({ default: module.OrdersPage })));
@@ -14,16 +15,23 @@ const HubManagementPage = lazy(() => import('./pages/hubs/HubManagementPage').th
 const NotificationsPage = lazy(() => import('./pages/notifications/NotificationsPage').then(module => ({ default: module.NotificationsPage })));
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage').then(module => ({ default: module.SettingsPage })));
 const TrackingPage = lazy(() => import('./pages/tracking/TrackingPage').then(module => ({ default: module.TrackingPage })));
+const HubManagerProfile = lazy(() => import('./pages/hub-manager/HubManagerProfile').then(module => ({ default: module.HubManagerProfile })));
 const fallback = <div className="empty-state"><p>Loading module...</p></div>;
 
 export default function App() {
   const { user, loading } = useAuth();
-  const { path } = useRouter();
+  const { path, navigate } = useRouter();
+  useEffect(() => {
+    if (!user) return;
+    if (path === '/' && dashboardPathFor(user) !== path) navigate(dashboardPathFor(user));
+    if (path === '/hub-dashboard' && !isHubManager(user)) navigate('/');
+  }, [navigate, path, user]);
   if (path.startsWith('/track/')) return <Suspense fallback={fallback}><TrackingPage orderId={decodeURIComponent(path.slice('/track/'.length))} /></Suspense>;
   if (loading) return <main className="login-page"><div className="login-card"><p>Loading secure session...</p></div></main>;
   if (!user) return <LoginPage />;
   const routes = {
     '/': <DashboardPage />,
+    ...(isHubManager(user) ? { '/hub-dashboard': <DashboardPage /> } : {}),
     '/orders': <OrdersPage />,
     '/riders': <RidersPage />,
     '/map': <LiveMapPage />,
@@ -32,6 +40,7 @@ export default function App() {
     '/hubs': <HubManagementPage />,
     '/notifications': <NotificationsPage />,
     '/settings': <SettingsPage />,
+    ...(isHubManager(user) ? { '/profile': <HubManagerProfile /> } : {}),
   };
   return <AppShell><Suspense fallback={fallback}>{routes[path] || <div className="empty-state"><h2>Page not found</h2><p>Use the navigation to return to an operational module.</p></div>}</Suspense></AppShell>;
 }

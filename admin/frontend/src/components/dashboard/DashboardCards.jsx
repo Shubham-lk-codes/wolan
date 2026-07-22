@@ -31,6 +31,15 @@ export function OverviewCards({ data = {} }) {
   </div>;
 }
 
-export function PerformanceCards() {
-  return null;
+export function PerformanceCards({ performance }) {
+  if (!performance) return null;
+  const duration = value => Number(value) > 0 ? `${Number(value).toLocaleString()} min` : 'No data';
+  const values = [
+    ['Avg pickup-to-delivery', duration(performance.avgPickupToDeliveryMinutes), 'Target under 45 min'],
+    ['Avg placement-to-delivery', duration(performance.avgPlacementToDeliveryMinutes), 'Target under 60 min'],
+    ['Avg driver response', duration(performance.avgDriverResponseMinutes), 'Target under 7 min'],
+    ['Failed delivery rate', `${Number(performance.failedDeliveryRate || 0)}%`, 'Target under 5%'],
+    ['Weekly completion', Number(performance.weeklyCompleted || 0).toLocaleString(), `${Number(performance.weeklyFailed || 0)} failed this week`],
+  ];
+  return <div className="performance-grid">{values.map(([label, value, note]) => <Card key={label}><span className="eyebrow">{label}</span><strong>{value}</strong><p className="positive">{note}</p></Card>)}</div>;
 }

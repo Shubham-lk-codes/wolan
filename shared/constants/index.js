@@ -15,6 +15,16 @@ export const SYSTEM_ROLES = Object.freeze(Object.values(ROLES));
 export const HQ_ROLES = Object.freeze([ROLES.SUPER_ADMIN, ROLES.DIRECTOR]);
 export const HUB_ROLES = Object.freeze([ROLES.HUB_MANAGER, ROLES.OPS_COORDINATOR]);
 
+const ROLE_ALIASES = Object.freeze({
+  ADMIN: ROLES.SUPER_ADMIN,
+});
+
+export function normalizeRole(value) {
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().replace(/[\s-]+/g, '_').toUpperCase();
+  return ROLE_ALIASES[normalized] ?? normalized;
+}
+
 export const ORDER_STATUS = Object.freeze({
   PENDING: 'PENDING',
   ASSIGNED: 'ASSIGNED',

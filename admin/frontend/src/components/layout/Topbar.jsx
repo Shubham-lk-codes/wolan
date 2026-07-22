@@ -4,6 +4,7 @@ import { navigation } from '../../data/dashboard';
 import { useRouter } from '../../router/Router';
 import { useNotifications } from '../../state/NotificationContext';
 import { useAuth } from '../../state/AuthContext';
+import { isHqUser, isHubManager } from '../../config/roles';
 
 export function Topbar({ onMenu }) {
   const { path, navigate } = useRouter();
@@ -12,12 +13,13 @@ export function Topbar({ onMenu }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 30_000); return () => window.clearInterval(timer); }, []);
   const current = navigation.find(item => item.path === path) || { label: 'HQ Master Dashboard' };
-  const isDashboard = path === '/';
+  const isDashboard = path === '/' || path === '/hub-dashboard';
   const isMap = path === '/map';
   const showLiveTools = isDashboard || isMap || path === '/hubs';
-  const title = path === '/reports' ? 'Reports & Analytics' : path === '/riders' ? 'Hub driver workspace' : isDashboard ? 'HQ Master Dashboard' : current.label;
-  const scopeLabel = ['SUPER_ADMIN', 'DIRECTOR'].includes(user?.role) ? 'All hubs' : user?.hubId || 'Assigned hub';
-  const subtitle = path === '/settings' ? 'System configuration, team management, and integrations' : path === '/notifications' ? 'Manage and monitor notification delivery' : path === '/hubs' ? 'Multi-hub HQ overview - all locations' : path === '/reports' ? 'Real backend reporting, COD reconciliation, and operational visibility' : isDashboard ? `Live overview - ${scopeLabel}` : path === '/orders' ? 'Create, assign, stage, and track orders in real time' : path === '/riders' ? 'Driver onboarding, compliance, availability, and performance' : isMap ? `Real-time rider and package GPS tracking - ${scopeLabel}` : `Manage ${current.label.toLowerCase()} across authorized hubs`;
+  const hubManager = isHubManager(user);
+  const title = path === '/profile' ? 'Profile' : path === '/reports' ? 'Reports & Analytics' : path === '/riders' ? 'Hub driver workspace' : isDashboard ? (hubManager ? 'Hub Dashboard' : 'HQ Master Dashboard') : current.label;
+  const scopeLabel = isHqUser(user) ? 'All hubs' : user?.hubId || 'Assigned hub';
+  const subtitle = path === '/profile' ? 'Authenticated account and assigned hub' : path === '/settings' ? (hubManager ? 'Dispatch, notification, and working-hours settings' : 'System configuration, team management, and integrations') : path === '/notifications' ? 'Manage and monitor notification delivery' : path === '/hubs' ? (hubManager ? 'Assigned hub profile - external branches hidden' : 'Multi-hub HQ overview - all locations') : path === '/reports' ? 'Real backend reporting, COD reconciliation, and operational visibility' : isDashboard ? `Live overview - ${scopeLabel}` : path === '/orders' ? 'Create, assign, stage, and track orders in real time' : path === '/riders' ? 'Driver onboarding, compliance, availability, and performance' : isMap ? `Real-time rider and package GPS tracking - ${scopeLabel}` : `Manage ${current.label.toLowerCase()} across authorized hubs`;
   return <header className="topbar">
     <button className="menu-button" onClick={onMenu} aria-label="Open menu">☰</button>
     <div className="top-title"><Brand compact /><span className="divider" /><div><h1>{title}</h1><p>{subtitle}</p></div></div>

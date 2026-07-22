@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { authRoutes, protectedAuthRoutes } from './auth.routes.js';
 import { dashboardRoutes } from './dashboard.routes.js';
 import { driverRoutes } from './driver.routes.js';
+import { hubManagerRoutes } from './hub-manager.routes.js';
 import { liveMapRouter } from './live-map.routes.js';
 import { notificationRoutes } from './notification.routes.js';
 import { orderRoutes } from './order.routes.js';
@@ -29,6 +30,7 @@ adminRouter.use('/auth', protectedAuthRoutes);
 adminRouter.use(applyHubScope, idempotency());
 adminRouter.use(
   dashboardRoutes,
+  hubManagerRoutes,
   userRoutes,
   reportRoutes,
   settingsRoutes,

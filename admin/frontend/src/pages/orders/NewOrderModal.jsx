@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { merchantService } from '../../services/resource.service';
 import { orderService } from '../../services/order.service';
+import { useAuth } from '../../state/AuthContext';
+import { isHubManager } from '../../config/roles';
 
 const steps=[['Merchant','Who sends it.'],['Customer','Receiver details.'],['Package','Size and zone.'],['Payment','COD and auto fee.'],['Hub Intake','Scan before rider.']];
 const initial={merchantId:'',customer:'',phone:'',customerEmail:'',pickupLocation:'',dropoffLocation:'',pickupLat:'',pickupLng:'',dropoffLat:'',dropoffLng:'',gpsOpen:false,zone:'',batchGroup:'',itemDescription:'',packageSize:'Medium',serviceType:'Standard',notes:'',value:0,codAmount:0,fee:0,distanceKm:0,insuranceEnabled:false,coverageAmount:0};
@@ -16,6 +18,7 @@ function Picker({items,value,onChange}){
 function Field({label,children,className=''}){return <label className={className}>{label}{children}</label>}
 
 export function NewOrderModal({onClose,onCreate}){
+  const{user}=useAuth(),hubManager=isHubManager(user);
   const[step,setStep]=useState(0),[merchants,setMerchants]=useState([]),[form,setForm]=useState(initial),[error,setError]=useState(''),[submitting,setSubmitting]=useState(false),[quoting,setQuoting]=useState(false);
   useEffect(()=>{const controller=new AbortController();merchantService.list({},controller.signal).then(setMerchants).catch(err=>setError(err.response?.data?.message||'Merchants could not be loaded.'));return()=>controller.abort()},[]);
   useEffect(()=>{const old=document.body.style.overflow;document.body.style.overflow='hidden';return()=>{document.body.style.overflow=old}},[]);
@@ -24,7 +27,7 @@ export function NewOrderModal({onClose,onCreate}){
   const coords=(lat,lng)=>lat!==''&&lng!==''?{latitude:Number(lat),longitude:Number(lng)}:undefined;
   async function quote(){setQuoting(true);setError('');try{const data=await orderService.quote({distanceKm:Number(form.distanceKm)||0,codAmount:form.codAmount,insurance:form.insuranceEnabled,serviceType:form.serviceType.toUpperCase()});setForm(current=>({...current,fee:data.total}))}catch(err){setError(err.response?.data?.message||'Delivery fee could not be calculated.')}finally{setQuoting(false)}}
   function next(){if(step===0&&!merchant)return setError('Select an active merchant.');if(step===1&&(!form.customer||!form.phone||!form.pickupLocation||!form.dropoffLocation))return setError('Complete customer, pickup, and drop-off fields.');if(step===2&&(!form.zone||!form.itemDescription))return setError('Complete zone and item description.');if(step===3&&form.insuranceEnabled&&form.coverageAmount<=0)return setError('Enter the insurance coverage amount.');setError('');setStep(current=>Math.min(4,current+1))}
-  async function submit(){setSubmitting(true);setError('');try{await onCreate({hubId:String(merchant.hubId),merchantId:form.merchantId,customer:{name:form.customer.trim(),phone:form.phone.trim(),email:form.customerEmail.trim()||undefined},pickup:{address:form.pickupLocation.trim(),location:coords(form.pickupLat,form.pickupLng)},delivery:{address:form.dropoffLocation.trim(),instructions:form.notes.trim()||undefined,location:coords(form.dropoffLat,form.dropoffLng)},itemDescription:form.itemDescription.trim(),declaredValue:Number(form.value)||0,paymentMethod:form.codAmount>0?'COD':'PREPAID',codAmount:Number(form.codAmount)||0,insurance:form.insuranceEnabled,serviceType:form.serviceType.toUpperCase(),distanceKm:Number(form.distanceKm)||0,packageSize:form.packageSize.toUpperCase(),batchGroup:form.batchGroup.trim()||undefined});onClose()}catch(err){setError(err.response?.data?.message||'Order could not be created.')}finally{setSubmitting(false)}}
+  async function submit(){setSubmitting(true);setError('');try{await onCreate({...(hubManager?{}:{hubId:String(merchant.hubId)}),merchantId:form.merchantId,customer:{name:form.customer.trim(),phone:form.phone.trim(),email:form.customerEmail.trim()||undefined},pickup:{address:form.pickupLocation.trim(),location:coords(form.pickupLat,form.pickupLng)},delivery:{address:form.dropoffLocation.trim(),instructions:form.notes.trim()||undefined,location:coords(form.dropoffLat,form.dropoffLng)},itemDescription:form.itemDescription.trim(),declaredValue:Number(form.value)||0,paymentMethod:form.codAmount>0?'COD':'PREPAID',codAmount:Number(form.codAmount)||0,insurance:form.insuranceEnabled,serviceType:form.serviceType.toUpperCase(),distanceKm:Number(form.distanceKm)||0,packageSize:form.packageSize.toUpperCase(),batchGroup:form.batchGroup.trim()||undefined});onClose()}catch(err){setError(err.response?.data?.message||'Order could not be created.')}finally{setSubmitting(false)}}
 
   return <div className="new-order-backdrop"><section className="new-order-modal">
     <header><h2><span>＋</span> Create New Order</h2><button onClick={onClose}>×</button></header>
