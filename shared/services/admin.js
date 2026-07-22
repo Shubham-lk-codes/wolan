@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import mongoose from 'mongoose';
 import {
-  AuditLog, COD, Customer, Driver, DriverEarning, FinePenalty, GPSDevice, Hub, Incident, KYCDocument, Merchant, Notification, Order, Package, Payment, Rating, Referral, Report, SecurityAlert, Setting, SupportTicket, Tracking, User, Vehicle, Zone,
+  AuditLog, COD, Customer, Driver, DriverEarning, FinePenalty, GPSDevice, Hub, Incident, KYCDocument, Merchant, Notification, Order, Package, Payment, Payout, Rating, Referral, Report, SecurityAlert, Setting, SupportTicket, Tracking, User, Vehicle, Zone,
 } from '../models/index.js';
 import { ROLES, SYSTEM_ACTOR_ID } from '../constants/index.js';
 import { withTransaction } from '../repositories/index.js';
@@ -9,6 +9,22 @@ import { AppError } from '../utils/index.js';
 import { AuthService, CODService, CrudService } from './index.js';
 
 const generatedCode = (prefix) => `${prefix}_${Date.now().toString(36).toUpperCase()}${randomBytes(2).toString('hex').toUpperCase()}`;
+
+export function reportPeriodRange(period = 'MONTHLY', now = new Date(), earliest) {
+  const end = new Date(now);
+  const year = end.getUTCFullYear();
+  const month = end.getUTCMonth();
+  const definitions = {
+    MONTHLY: { start: new Date(Date.UTC(year, month, 1)), bucket: 'day', label: 'This month' },
+    QUARTERLY: { start: new Date(Date.UTC(year, Math.floor(month / 3) * 3, 1)), bucket: 'day', label: 'This quarter' },
+    YEARLY: { start: new Date(Date.UTC(year, 0, 1)), bucket: 'month', label: 'This year' },
+    ALL: { start: earliest ? new Date(earliest) : new Date(0), bucket: 'month', label: 'All database records' },
+  };
+  const selected = definitions[period] ?? definitions.MONTHLY;
+  return { period: definitions[period] ? period : 'MONTHLY', start: selected.start, end, bucket: selected.bucket, label: selected.label };
+}
+
+const reportStatusLabel = (status) => String(status || '').toLowerCase().split('_').map((word) => word[0]?.toUpperCase() + word.slice(1)).join(' ');
 
 const resourceDefinitions = Object.freeze({
   hubs: [Hub, { searchFields: ['code', 'name', 'city', 'region'], filterFields: ['status', 'region'] }],
@@ -26,7 +42,7 @@ const resourceDefinitions = Object.freeze({
   customers: [Customer, { searchFields: ['name', 'phone', 'email'], filterFields: ['status'] }],
   alerts: [SecurityAlert, { searchFields: ['type'], filterFields: ['status', 'type', 'severity'] }],
   audit: [AuditLog, { searchFields: ['action', 'resourceType', 'requestId'], filterFields: ['status', 'actorId', 'resourceType'] }],
-  tickets: [SupportTicket, { searchFields: ['subject', 'message'], filterFields: ['status', 'priority', 'assignedTo'] }],
+  tickets: [SupportTicket, { searchFields: ['subject', 'message'], filterFields: ['status', 'priority', 'assignedTo', 'merchantId'] }],
 });
 
 export class AdminPortalService {
@@ -56,6 +72,47 @@ export class AdminPortalService {
     return {
       orderStats: Object.fromEntries(orderGroups.map((item) => [item._id, { count: item.count, revenue: item.revenue }])),
       onlineDrivers, merchants, activeAlerts, codExposure, recentOrders, liveRiders,
+    };
+  }
+
+  async merchantSummary(scope) {
+    const filter = { ...scope, deletedAt: null };
+    const merchantScope = Object.prototype.hasOwnProperty.call(scope, 'hubId') ? { 'merchant.hubId': scope.hubId } : {};
+    const [merchantTotals, codPending, m2mReferrals, eliteEscalations] = await Promise.all([
+      Merchant.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: null,
+            totalMerchants: { $sum: 1 },
+            eliteTier: { $sum: { $cond: [{ $eq: ['$tier', 'ELITE'] }, 1, 0] } },
+            priorityTier: { $sum: { $cond: [{ $eq: ['$tier', 'PRIORITY'] }, 1, 0] } },
+            kycPending: { $sum: { $cond: [{ $ne: ['$kycStatus', 'VERIFIED'] }, 1, 0] } },
+          },
+        },
+      ]),
+      COD.aggregate([
+        { $match: { ...filter, status: { $in: ['PENDING', 'COLLECTED'] } } },
+        { $group: { _id: null, total: { $sum: '$merchantPayout' } } },
+      ]),
+      Referral.countDocuments(filter),
+      SupportTicket.aggregate([
+        { $match: { ...filter, resolvedAt: null, status: { $nin: ['RESOLVED', 'CLOSED'] }, merchantId: { $ne: null } } },
+        { $lookup: { from: Merchant.collection.name, localField: 'merchantId', foreignField: '_id', as: 'merchant' } },
+        { $unwind: '$merchant' },
+        { $match: { 'merchant.tier': 'ELITE', 'merchant.deletedAt': null, ...merchantScope } },
+        { $count: 'count' },
+      ]),
+    ]);
+    return {
+      totalMerchants: merchantTotals[0]?.totalMerchants ?? 0,
+      eliteTier: merchantTotals[0]?.eliteTier ?? 0,
+      priorityTier: merchantTotals[0]?.priorityTier ?? 0,
+      eliteEscalations: eliteEscalations[0]?.count ?? 0,
+      kycPending: merchantTotals[0]?.kycPending ?? 0,
+      totalCodPending: codPending[0]?.total ?? 0,
+      m2mReferrals,
+      currency: 'UGX',
     };
   }
 
@@ -95,33 +152,110 @@ export class AdminPortalService {
     };
   }
 
-  async reportOverview(scope) {
-    const filter = { ...scope, deletedAt: null };
-    const [statusRows, daily, drivers, hubs, zones, codRows, customers] = await Promise.all([
-      Order.aggregate([{ $match: filter }, { $group: { _id: '$orderStatus', orders: { $sum: 1 }, revenue: { $sum: { $cond: [{ $eq: ['$orderStatus', 'DELIVERED'] }, '$pricing.total', 0] } }, deliveryMinutes: { $avg: { $cond: [{ $and: ['$deliveredAt', '$createdAt'] }, { $divide: [{ $subtract: ['$deliveredAt', '$createdAt'] }, 60_000] }, null] } } } }]),
-      Order.aggregate([{ $match: filter }, { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, orders: { $sum: 1 }, revenue: { $sum: { $cond: [{ $eq: ['$orderStatus', 'DELIVERED'] }, '$pricing.total', 0] } } } }, { $sort: { _id: 1 } }, { $limit: 90 }]),
-      Driver.find(filter).select('name driverCode availability completedDeliveries rating codHeld vehicleId status').sort({ completedDeliveries: -1 }).limit(100).lean(),
-      Hub.find(filter).select('hubId code name city region status dailyTarget').sort({ name: 1 }).lean(),
-      Zone.find(filter).select('code name status').sort({ name: 1 }).lean(),
-      COD.aggregate([{ $match: filter }, { $group: { _id: '$status', amount: { $sum: '$amount' }, count: { $sum: 1 } } }]),
-      Customer.aggregate([{ $match: filter }, { $group: { _id: null, unique: { $sum: 1 }, repeat: { $sum: { $cond: [{ $gt: ['$orderCount', 1] }, 1, 0] } }, orders: { $sum: '$orderCount' } } }]),
+  async reportOverview(scope, query = {}) {
+    const baseFilter = { ...scope, deletedAt: null };
+    const requestedPeriod = String(query.period || 'MONTHLY').toUpperCase();
+    const earliestOrder = requestedPeriod === 'ALL'
+      ? await Order.findOne(baseFilter).select('createdAt').sort({ createdAt: 1 }).lean()
+      : null;
+    const range = reportPeriodRange(requestedPeriod, new Date(), earliestOrder?.createdAt);
+    const filter = { ...baseFilter, createdAt: { $gte: range.start, $lte: range.end } };
+    const bucketFormat = range.bucket === 'month' ? '%Y-%m' : '%Y-%m-%d';
+
+    const [statusRows, daily, drivers, driverRows, hubs, hubRows, zones, zoneRows, codRows, payoutRows, codRecords, payoutRecords, customerRows] = await Promise.all([
+      Order.aggregate([{ $match: filter }, {
+        $group: {
+          _id: '$orderStatus',
+          orders: { $sum: 1 },
+          revenue: { $sum: { $cond: [{ $eq: ['$orderStatus', 'DELIVERED'] }, { $ifNull: ['$pricing.total', 0] }, 0] } },
+          deliveryMinutes: { $avg: { $cond: [{ $and: ['$pickedUpAt', '$deliveredAt'] }, { $divide: [{ $subtract: ['$deliveredAt', '$pickedUpAt'] }, 60_000] }, null] } },
+        },
+      }]),
+      Order.aggregate([{ $match: filter }, { $group: { _id: { $dateToString: { format: bucketFormat, date: '$createdAt', timezone: 'UTC' } }, orders: { $sum: 1 }, revenue: { $sum: { $cond: [{ $eq: ['$orderStatus', 'DELIVERED'] }, { $ifNull: ['$pricing.total', 0] }, 0] } } } }, { $sort: { _id: 1 } }]),
+      Driver.find(baseFilter).select('name driverCode phone availability completedDeliveries failedDeliveries rating codHeld vehicleId status createdAt').sort({ name: 1 }).limit(500).lean(),
+      Order.aggregate([{ $match: { ...filter, driverId: { $ne: null } } }, { $group: { _id: '$driverId', orders: { $sum: 1 }, delivered: { $sum: { $cond: [{ $eq: ['$orderStatus', 'DELIVERED'] }, 1, 0] } }, failed: { $sum: { $cond: [{ $eq: ['$orderStatus', 'FAILED'] }, 1, 0] } }, deliveryMinutes: { $avg: { $cond: [{ $and: ['$pickedUpAt', '$deliveredAt'] }, { $divide: [{ $subtract: ['$deliveredAt', '$pickedUpAt'] }, 60_000] }, null] } } } }]),
+      Hub.find(baseFilter).select('hubId code name city region status dailyTarget').sort({ name: 1 }).lean(),
+      Order.aggregate([{ $match: filter }, { $group: { _id: '$hubId', orders: { $sum: 1 }, delivered: { $sum: { $cond: [{ $eq: ['$orderStatus', 'DELIVERED'] }, 1, 0] } }, failed: { $sum: { $cond: [{ $eq: ['$orderStatus', 'FAILED'] }, 1, 0] } }, revenue: { $sum: { $cond: [{ $eq: ['$orderStatus', 'DELIVERED'] }, { $ifNull: ['$pricing.total', 0] }, 0] } } } }]),
+      Zone.find(baseFilter).select('hubId code name status').sort({ name: 1 }).lean(),
+      Order.aggregate([{ $match: { ...filter, 'delivery.zoneId': { $ne: null } } }, { $group: { _id: '$delivery.zoneId', orders: { $sum: 1 }, delivered: { $sum: { $cond: [{ $eq: ['$orderStatus', 'DELIVERED'] }, 1, 0] } }, failed: { $sum: { $cond: [{ $eq: ['$orderStatus', 'FAILED'] }, 1, 0] } }, revenue: { $sum: { $cond: [{ $eq: ['$orderStatus', 'DELIVERED'] }, { $ifNull: ['$pricing.total', 0] }, 0] } } } }]),
+      COD.aggregate([{ $match: filter }, { $group: { _id: '$status', amount: { $sum: '$amount' }, merchantPayout: { $sum: '$merchantPayout' }, serviceFees: { $sum: '$serviceFee' }, count: { $sum: 1 } } }]),
+      Payout.aggregate([{ $match: filter }, { $group: { _id: '$status', amount: { $sum: '$amount' }, count: { $sum: 1 } } }]),
+      COD.find(filter).select('orderId merchantId amount merchantPayout serviceFee status collectedAt reconciledAt paidOutAt createdAt').populate('merchantId', 'businessName shopName merchantCode').populate('orderId', 'orderNumber').sort({ createdAt: -1 }).limit(100).lean(),
+      Payout.find(filter).select('merchantId amount currency status providerReference scheduledFor processedAt failureReason createdAt').populate('merchantId', 'businessName shopName merchantCode').sort({ createdAt: -1 }).limit(100).lean(),
+      Order.aggregate([{ $match: filter }, { $group: { _id: '$customer.phone', name: { $first: '$customer.name' }, orders: { $sum: 1 }, delivered: { $sum: { $cond: [{ $eq: ['$orderStatus', 'DELIVERED'] }, 1, 0] } }, failed: { $sum: { $cond: [{ $eq: ['$orderStatus', 'FAILED'] }, 1, 0] } }, codValue: { $sum: { $ifNull: ['$codAmount', 0] } }, lastOrderAt: { $max: '$createdAt' } } }, { $sort: { orders: -1, lastOrderAt: -1 } }, { $limit: 500 }]),
     ]);
+
     const totalOrders = statusRows.reduce((sum, row) => sum + row.orders, 0);
     const revenue = statusRows.reduce((sum, row) => sum + row.revenue, 0);
     const failed = statusRows.find((row) => row._id === 'FAILED')?.orders ?? 0;
-    const deliveryValues = statusRows.map((row) => row.deliveryMinutes).filter(Number.isFinite);
-    const statusMix = Object.fromEntries(statusRows.map((row) => [row._id.toLowerCase().split('_').map((word) => word[0].toUpperCase() + word.slice(1)).join(' '), row.orders]));
-    const customer = customers[0] ?? { unique: 0, repeat: 0, orders: 0 };
+    const deliveryRows = statusRows.map((row) => row.deliveryMinutes).filter(Number.isFinite);
+    const driverStats = new Map(driverRows.map((row) => [String(row._id), row]));
+    const riderPerformance = drivers.map((driver) => {
+      const stats = driverStats.get(String(driver._id)) ?? { orders: 0, delivered: 0, failed: 0, deliveryMinutes: 0 };
+      return {
+        ...driver,
+        periodOrders: stats.orders,
+        periodDeliveries: stats.delivered,
+        periodFailures: stats.failed,
+        completionRate: stats.orders ? Number((stats.delivered / stats.orders * 100).toFixed(1)) : 0,
+        avgDeliveryMinutes: Math.round(stats.deliveryMinutes || 0),
+      };
+    }).sort((left, right) => right.periodDeliveries - left.periodDeliveries || right.rating - left.rating);
+    const hubStats = new Map(hubRows.map((row) => [String(row._id), row]));
+    const hubPerformance = hubs.map((hub) => {
+      const stats = hubStats.get(String(hub.hubId)) ?? { orders: 0, delivered: 0, failed: 0, revenue: 0 };
+      return { ...hub, ...stats, hitRate: stats.orders ? Number((stats.delivered / stats.orders * 100).toFixed(1)) : 0 };
+    });
+    const zoneStats = new Map(zoneRows.map((row) => [String(row._id), row]));
+    const zonePerformance = zones.map((zone) => {
+      const stats = zoneStats.get(String(zone._id)) ?? { orders: 0, delivered: 0, failed: 0, revenue: 0 };
+      return { ...zone, ...stats, successRate: stats.orders ? Number((stats.delivered / stats.orders * 100).toFixed(1)) : 0 };
+    });
+    const activeCodStatuses = new Set(['PENDING', 'COLLECTED']);
+    const totalCod = codRows.reduce((sum, row) => sum + row.amount, 0);
+    const codInField = codRows.filter((row) => activeCodStatuses.has(row._id)).reduce((sum, row) => sum + row.amount, 0);
+    const codSettled = codRows.filter((row) => !activeCodStatuses.has(row._id)).reduce((sum, row) => sum + row.merchantPayout, 0);
+    const pendingWithdrawals = payoutRows.filter((row) => !['PROCESSED', 'PAID', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(row._id)).reduce((sum, row) => sum + row.amount, 0);
+    const settlementRecords = [
+      ...payoutRecords.map((record) => ({
+        id: record._id, type: 'Merchant payout', reference: record.providerReference || String(record._id),
+        merchant: record.merchantId?.businessName || record.merchantId?.shopName || record.merchantId?.merchantCode || 'Unknown merchant',
+        amount: record.amount, currency: record.currency || 'UGX', status: record.processedAt ? 'PROCESSED' : record.status,
+        recordedAt: record.processedAt || record.scheduledFor || record.createdAt,
+      })),
+      ...codRecords.map((record) => ({
+        id: record._id, type: 'COD settlement', reference: record.orderId?.orderNumber || String(record._id),
+        merchant: record.merchantId?.businessName || record.merchantId?.shopName || record.merchantId?.merchantCode || 'Unknown merchant',
+        amount: record.merchantPayout, currency: 'UGX', status: record.paidOutAt ? 'PAID_OUT' : record.reconciledAt ? 'RECONCILED' : record.status,
+        recordedAt: record.paidOutAt || record.reconciledAt || record.collectedAt || record.createdAt,
+      })),
+    ].sort((left, right) => new Date(right.recordedAt) - new Date(left.recordedAt)).slice(0, 100);
+    const ratingValues = drivers.map((driver) => Number(driver.rating)).filter(Number.isFinite);
+    const customerOrders = customerRows.reduce((sum, row) => sum + row.orders, 0);
+    const scopeLabel = !scope.hubId ? 'All hubs' : typeof scope.hubId === 'string' ? scope.hubId : 'Assigned hubs';
+
     return {
-      totalOrders, revenue, failedRate: totalOrders ? Number((failed / totalOrders * 100).toFixed(1)) : 0,
-      avgDeliveryMinutes: deliveryValues.length ? Math.round(deliveryValues.reduce((sum, value) => sum + value, 0) / deliveryValues.length) : 0,
-      statusMix, daily, riders: drivers, hubs, zones, cod: { total: codRows.reduce((sum, row) => sum + row.amount, 0), byStatus: codRows },
-      customers: { unique: customer.unique, repeat: customer.repeat, averageOrders: customer.unique ? Number((customer.orders / customer.unique).toFixed(1)) : 0, failedOrders: failed },
+      range: { ...range, start: range.start.toISOString(), end: range.end.toISOString() }, scopeLabel,
+      totalOrders, revenue, failedOrders: failed, failedRate: totalOrders ? Number((failed / totalOrders * 100).toFixed(1)) : 0,
+      avgDeliveryMinutes: deliveryRows.length ? Math.round(deliveryRows.reduce((sum, value) => sum + value, 0) / deliveryRows.length) : 0,
+      averageRiderRating: ratingValues.length ? Number((ratingValues.reduce((sum, value) => sum + value, 0) / ratingValues.length).toFixed(1)) : 0,
+      riderCount: drivers.length,
+      statusMix: Object.fromEntries(statusRows.map((row) => [reportStatusLabel(row._id), row.orders])),
+      daily, riders: riderPerformance, hubs: hubPerformance, zones: zonePerformance,
+      cod: { total: totalCod, inField: codInField, settled: codSettled, pendingWithdrawals, byStatus: codRows, payoutsByStatus: payoutRows, records: settlementRecords },
+      customers: {
+        unique: customerRows.length,
+        repeat: customerRows.filter((row) => row.orders > 1).length,
+        averageOrders: customerRows.length ? Number((customerOrders / customerRows.length).toFixed(1)) : 0,
+        failedOrders: customerRows.reduce((sum, row) => sum + row.failed, 0),
+        records: customerRows,
+      },
     };
   }
 
-  async exportOrdersCsv(scope) {
-    const rows = await Order.find({ ...scope, deletedAt: null }).select('orderNumber hubId orderStatus merchantId driverId customer createdAt deliveredAt codAmount pricing.total').sort({ createdAt: -1 }).limit(50_000).lean();
+  async exportOrdersCsv(scope, query = {}) {
+    const range = reportPeriodRange(String(query.period || 'MONTHLY').toUpperCase());
+    const rows = await Order.find({ ...scope, deletedAt: null, createdAt: { $gte: range.start, $lte: range.end } }).select('orderNumber hubId orderStatus merchantId driverId customer createdAt deliveredAt codAmount pricing.total').sort({ createdAt: -1 }).limit(50_000).lean();
     const escape = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
     const header = ['orderNumber', 'hubId', 'status', 'merchantId', 'driverId', 'customer', 'customerPhone', 'codAmount', 'deliveryFee', 'createdAt', 'deliveredAt'];
     return [header.join(','), ...rows.map((row) => [row.orderNumber, row.hubId, row.orderStatus, row.merchantId, row.driverId, row.customer?.name, row.customer?.phone, row.codAmount, row.pricing?.total, row.createdAt?.toISOString(), row.deliveredAt?.toISOString()].map(escape).join(','))].join('\n');

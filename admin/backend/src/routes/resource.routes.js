@@ -12,6 +12,8 @@ const resources = [
 
 export const resourceRoutes = Router();
 
+resourceRoutes.get('/merchants/summary', authorize('merchant:read', 'merchant:*'), route(controller.merchantSummary));
+
 for (const resource of resources) {
   const singular = resource === 'hubs' ? 'hub' : resource.replace(/s$/, '');
   resourceRoutes.get(`/${resource}`, authorize(`${singular}:read`, `${singular}:*`), validate(paginationSchema, 'query'), route(controller.resourceList(resource)));

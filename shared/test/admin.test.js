@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { User, Vehicle } from '../models/index.js';
-import { AdminPortalService } from '../services/admin.js';
+import { COD, Merchant, Referral, SupportTicket, User, Vehicle } from '../models/index.js';
+import { AdminPortalService, reportPeriodRange } from '../services/admin.js';
 
 test('hub creation keeps its generated operational id instead of the creator hub id', () => {
   const service = new AdminPortalService();
@@ -22,6 +22,86 @@ test('hub creation keeps its generated operational id instead of the creator hub
   assert.equal(result.context.hubId, result.data.hubId);
   assert.notEqual(result.context.hubId, creatorContext.hubId);
   assert.equal(result.context.actorId, creatorContext.actorId);
+});
+
+test('merchant summary returns hub-scoped database aggregates', async t => {
+  const originals = {
+    merchantAggregate: Merchant.aggregate,
+    codAggregate: COD.aggregate,
+    referralCount: Referral.countDocuments,
+    ticketAggregate: SupportTicket.aggregate,
+  };
+  t.after(() => {
+    Merchant.aggregate = originals.merchantAggregate;
+    COD.aggregate = originals.codAggregate;
+    Referral.countDocuments = originals.referralCount;
+    SupportTicket.aggregate = originals.ticketAggregate;
+  });
+
+  let merchantPipeline;
+  let codPipeline;
+  let referralFilter;
+  let ticketPipeline;
+  Merchant.aggregate = async pipeline => {
+    merchantPipeline = pipeline;
+    return [{ totalMerchants: 12, eliteTier: 2, priorityTier: 3, kycPending: 4 }];
+  };
+  COD.aggregate = async pipeline => {
+    codPipeline = pipeline;
+    return [{ total: 125_000 }];
+  };
+  Referral.countDocuments = async filter => {
+    referralFilter = filter;
+    return 5;
+  };
+  SupportTicket.aggregate = async pipeline => {
+    ticketPipeline = pipeline;
+    return [{ count: 1 }];
+  };
+
+  const service = new AdminPortalService();
+  const summary = await service.merchantSummary({ hubId: 'HUB_001' });
+
+  assert.deepEqual(summary, {
+    totalMerchants: 12,
+    eliteTier: 2,
+    priorityTier: 3,
+    eliteEscalations: 1,
+    kycPending: 4,
+    totalCodPending: 125_000,
+    m2mReferrals: 5,
+    currency: 'UGX',
+  });
+  assert.deepEqual(merchantPipeline[0].$match, { hubId: 'HUB_001', deletedAt: null });
+  assert.deepEqual(codPipeline[0].$match, { hubId: 'HUB_001', deletedAt: null, status: { $in: ['PENDING', 'COLLECTED'] } });
+  assert.deepEqual(referralFilter, { hubId: 'HUB_001', deletedAt: null });
+  assert.equal(ticketPipeline[3].$match['merchant.hubId'], 'HUB_001');
+});
+
+test('report periods resolve to stable UTC database ranges', () => {
+  const now = new Date('2026-07-22T10:30:00.000Z');
+  assert.deepEqual(reportPeriodRange('MONTHLY', now), {
+    period: 'MONTHLY',
+    start: new Date('2026-07-01T00:00:00.000Z'),
+    end: now,
+    bucket: 'day',
+    label: 'This month',
+  });
+  assert.deepEqual(reportPeriodRange('QUARTERLY', now), {
+    period: 'QUARTERLY',
+    start: new Date('2026-07-01T00:00:00.000Z'),
+    end: now,
+    bucket: 'day',
+    label: 'This quarter',
+  });
+  assert.deepEqual(reportPeriodRange('YEARLY', now), {
+    period: 'YEARLY',
+    start: new Date('2026-01-01T00:00:00.000Z'),
+    end: now,
+    bucket: 'month',
+    label: 'This year',
+  });
+  assert.equal(reportPeriodRange('ALL', now, new Date('2024-03-04T12:00:00.000Z')).start.toISOString(), '2024-03-04T12:00:00.000Z');
 });
 
 test('driver onboarding identifies an email conflict before creating records', async t => {

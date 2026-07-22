@@ -26,6 +26,12 @@ export const orderListQuerySchema = paginationSchema.extend({
   driverId: objectIdSchema.optional(),
 }).strict();
 
+export const reportQuerySchema = z.object({
+  hubId: hubIdSchema.optional(),
+  period: z.enum(['MONTHLY', 'QUARTERLY', 'YEARLY', 'ALL']).default('MONTHLY'),
+  format: z.enum(['csv']).optional(),
+}).strict();
+
 const addressSchema = z.object({
   name: z.string().trim().max(120).optional(),
   phone: phoneSchema.optional(),

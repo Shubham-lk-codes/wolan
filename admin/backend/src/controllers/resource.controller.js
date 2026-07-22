@@ -4,6 +4,9 @@ import { adminPortal } from '../services/admin-services.js';
 export const resourceList = (name) => async (request, response) =>
   successResponse(response, await adminPortal.listResource(name, request.scope, request.query));
 
+export const merchantSummary = async (request, response) =>
+  successResponse(response, await adminPortal.merchantSummary(request.scope));
+
 export const resourceGet = (name) => async (request, response) =>
   successResponse(response, await adminPortal.getResource(name, request.params.id, request.scope));
 
