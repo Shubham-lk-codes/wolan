@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { hubService, riderService } from '../../services/resource.service';
 
 const initial = { name: '', phone: '', email: '', password: '', hubId: '', yearsExperience: 0, district: '', division: '', specificStage: '', stageChairmanContact: '', vehicleType: 'Moto / Boda Boda', plateNumber: '', nationalId: '', kinName: '', kinPhone: '', kinRelationship: '', legalAccepted: false };
@@ -9,6 +9,7 @@ function Field({ label, name, type = 'text', placeholder, required = true, min, 
 }
 
 export function DriverOnboardingModal({ onClose, onCreated }) {
+  const submittingRef = useRef(false);
   const [form, setForm] = useState(initial);
   const [hubs, setHubs] = useState([]);
   const [submitting, setSubmitting] = useState(false);
@@ -36,20 +37,25 @@ export function DriverOnboardingModal({ onClose, onCreated }) {
 
   async function submit(event) {
     event.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setError('');
     try {
-      const rider = await riderService.onboard({
+      const payload = {
         name: form.name.trim(), phone: form.phone.trim(), email: form.email.trim(), password: form.password, hubId: form.hubId,
         yearsExperience: Number(form.yearsExperience), district: form.district.trim(), division: form.division.trim(),
         specificStage: form.specificStage.trim(), stageChairmanContact: form.stageChairmanContact.trim(), vehicleType: form.vehicleType,
         plateNumber: form.plateNumber.trim(), nationalId: form.nationalId.trim(),
         nextOfKin: { name: form.kinName.trim(), phone: form.kinPhone.trim(), relationship: form.kinRelationship.trim() }, legalAccepted: form.legalAccepted,
-      });
+      };
+      const availability = await riderService.availability({ email: payload.email, phone: payload.phone, plateNumber: payload.plateNumber });
+      if (!availability.available) { setError(availability.conflicts.map(conflict => conflict.message).join('. ')); return; }
+      const rider = await riderService.onboard(payload);
       onCreated(rider);
     } catch (submitError) {
       setError(submitError.response?.data?.message || 'Driver could not be added. Check every field and try again.');
-    } finally { setSubmitting(false); }
+    } finally { submittingRef.current = false; setSubmitting(false); }
   }
 
   return <div className="driver-modal-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}>

@@ -368,6 +368,7 @@ export class TrackingService {
   }
 
   async detectMismatch(orderId, context) {
+    const actorId = context.actorId ?? SYSTEM_ACTOR_ID;
     const latest = await Tracking.aggregate([
       { $match: { hubId: context.hubId, orderId: new mongoose.Types.ObjectId(orderId), deletedAt: null } },
       { $sort: { recordedAt: -1 } },
@@ -380,7 +381,7 @@ export class TrackingService {
     if (separation < LIMITS.TRACKER_MISMATCH_METRES) return null;
     const existing = await SecurityAlert.findOne({ hubId: context.hubId, orderId, type: 'PACKAGE_MISMATCH', status: 'OPEN', deletedAt: null });
     if (existing) return existing;
-    const alert = await SecurityAlert.create({ hubId: context.hubId, createdBy: context.actorId, updatedBy: context.actorId, status: 'OPEN', type: 'PACKAGE_MISMATCH', severity: 'CRITICAL', orderId, details: { separationMetres: Math.round(separation) } });
+    const alert = await SecurityAlert.create({ hubId: context.hubId, createdBy: actorId, updatedBy: actorId, status: 'OPEN', type: 'PACKAGE_MISMATCH', severity: 'CRITICAL', orderId, details: { separationMetres: Math.round(separation) } });
     await this.eventPublisher?.(SOCKET_EVENTS.PACKAGE_MISMATCH, { hubId: context.hubId, orderId, separationMetres: Math.round(separation), alertId: alert._id });
     return alert;
   }

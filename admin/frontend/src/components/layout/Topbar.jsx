@@ -3,10 +3,12 @@ import { Brand } from './Sidebar';
 import { navigation } from '../../data/dashboard';
 import { useRouter } from '../../router/Router';
 import { useNotifications } from '../../state/NotificationContext';
+import { useAuth } from '../../state/AuthContext';
 
 export function Topbar({ onMenu }) {
   const { path, navigate } = useRouter();
   const { unreadCount, realtimeConnected } = useNotifications();
+  const { user } = useAuth();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 30_000); return () => window.clearInterval(timer); }, []);
   const current = navigation.find(item => item.path === path) || { label: 'HQ Master Dashboard' };
@@ -14,7 +16,8 @@ export function Topbar({ onMenu }) {
   const isMap = path === '/map';
   const showLiveTools = isDashboard || isMap || path === '/hubs';
   const title = path === '/reports' ? 'Reports & Analytics' : path === '/riders' ? 'Hub driver workspace' : isDashboard ? 'HQ Master Dashboard' : current.label;
-  const subtitle = path === '/settings' ? 'System configuration, team management, and integrations' : path === '/notifications' ? 'Manage and monitor notification delivery' : path === '/hubs' ? 'Multi-hub HQ overview - all locations' : path === '/reports' ? 'Real backend reporting, COD reconciliation, and operational visibility' : isDashboard ? 'Live overview - All hubs' : path === '/orders' ? 'Create, assign, stage, and track orders in real time' : path === '/riders' ? 'Driver onboarding, compliance, availability, and performance' : isMap ? 'Real-time rider and package GPS tracking - All hubs' : `Manage ${current.label.toLowerCase()} across all hubs`;
+  const scopeLabel = ['SUPER_ADMIN', 'DIRECTOR'].includes(user?.role) ? 'All hubs' : user?.hubId || 'Assigned hub';
+  const subtitle = path === '/settings' ? 'System configuration, team management, and integrations' : path === '/notifications' ? 'Manage and monitor notification delivery' : path === '/hubs' ? 'Multi-hub HQ overview - all locations' : path === '/reports' ? 'Real backend reporting, COD reconciliation, and operational visibility' : isDashboard ? `Live overview - ${scopeLabel}` : path === '/orders' ? 'Create, assign, stage, and track orders in real time' : path === '/riders' ? 'Driver onboarding, compliance, availability, and performance' : isMap ? `Real-time rider and package GPS tracking - ${scopeLabel}` : `Manage ${current.label.toLowerCase()} across authorized hubs`;
   return <header className="topbar">
     <button className="menu-button" onClick={onMenu} aria-label="Open menu">☰</button>
     <div className="top-title"><Brand compact /><span className="divider" /><div><h1>{title}</h1><p>{subtitle}</p></div></div>

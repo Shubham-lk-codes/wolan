@@ -244,6 +244,7 @@ export class AdminPortalService {
     const hubId = await this.resolveHubId(input.hubId ?? context.hubId);
     if (!hubId) throw new AppError('A hub is required', 422, 'HUB_REQUIRED');
     if (!input.password && !input.pin) throw new AppError('A temporary password or PIN is required', 422, 'PASSWORD_REQUIRED');
+    await this.assertDriverIdentityAvailable(input);
     return withTransaction(async (session) => {
       const user = await User.create([{
         hubId, name: input.name, email: input.email || undefined, phone: input.phone,
@@ -270,6 +271,30 @@ export class AdminPortalService {
       await user.save({ session });
       return driver;
     });
+  }
+
+  async driverIdentityAvailability(input) {
+    const email = input.email?.trim().toLowerCase();
+    const phone = input.phone?.trim();
+    const plateNumber = input.plateNumber?.trim().toUpperCase();
+    const userMatches = [email ? { email } : null, phone ? { phone } : null].filter(Boolean);
+    const [existingUser, existingVehicle] = await Promise.all([
+      userMatches.length ? User.findOne({ deletedAt: null, $or: userMatches }).select('email phone').lean() : null,
+      plateNumber ? Vehicle.findOne({ plateNumber }).select('_id').lean() : null,
+    ]);
+    const conflicts = [];
+    if (email && existingUser?.email === email) conflicts.push({ field: 'email', message: 'This email is already assigned to another account' });
+    if (phone && existingUser?.phone === phone) conflicts.push({ field: 'phone', message: 'This phone number is already assigned to another account' });
+    if (existingVehicle) conflicts.push({ field: 'plateNumber', message: 'This vehicle plate is already assigned to another driver' });
+    return { available: conflicts.length === 0, conflicts };
+  }
+
+  async assertDriverIdentityAvailable(input) {
+    const availability = await this.driverIdentityAvailability(input);
+    const conflict = availability.conflicts[0];
+    if (!conflict) return;
+    const codes = { email: 'DRIVER_EMAIL_IN_USE', phone: 'DRIVER_PHONE_IN_USE', plateNumber: 'DRIVER_PLATE_IN_USE' };
+    throw new AppError(conflict.message, 409, codes[conflict.field], { field: conflict.field });
   }
 
   async createUser(input, context) {

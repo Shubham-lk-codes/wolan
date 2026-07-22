@@ -18,6 +18,8 @@ const port = (serviceName, fallback) => {
 
 const nodeEnv = process.env.NODE_ENV ?? 'development';
 const isTest = nodeEnv === 'test';
+const corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173').split(',').map((value) => value.trim()).filter(Boolean);
+if (nodeEnv === 'development' && !corsOrigins.includes('http://localhost:5173')) corsOrigins.push('http://localhost:5173');
 const mongoUri = isTest && process.env.MONGODB_URI ? process.env.MONGODB_URI : required('MONGODB_URI');
 const configuredDatabaseName = process.env.MONGODB_DB_NAME?.trim();
 if (nodeEnv === 'production' && !configuredDatabaseName) throw new Error('MONGODB_DB_NAME is required in production');
@@ -37,7 +39,7 @@ export const env = Object.freeze({
   jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '30d',
   jwtIssuer: process.env.JWT_ISSUER ?? 'wolan-logistics',
   jwtAudience: process.env.JWT_AUDIENCE ?? 'wolan-platform',
-  corsOrigins: (process.env.CORS_ORIGINS ?? 'http://localhost:5173').split(',').map((value) => value.trim()).filter(Boolean),
+  corsOrigins: Object.freeze(corsOrigins),
   redisUrl: process.env.REDIS_URL ?? '',
   logLevel: process.env.LOG_LEVEL ?? 'info',
   trackingWebhookSecret: required('TRACKING_WEBHOOK_SECRET'),

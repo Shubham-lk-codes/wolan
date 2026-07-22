@@ -47,6 +47,7 @@ export const me = async (request, response) => successResponse(response, request
 
 export const dashboard = async (request, response) => successResponse(response, await admin.dashboard(request.scope));
 export const driverWorkspace = async (request, response) => successResponse(response, await admin.driverWorkspace(request.params.id, request.scope));
+export const driverIdentityAvailability = async (request, response) => successResponse(response, await admin.driverIdentityAvailability(request.body));
 export const reportOverview = async (request, response) => successResponse(response, await admin.reportOverview(request.scope));
 export const exportReport = async (request, response) => {
   const csv = await admin.exportOrdersCsv(request.scope);

@@ -56,11 +56,25 @@ export function errorHandler(error, request, response, _next) {
   let statusCode = error.statusCode ?? 500;
   let code = error.code ?? 'INTERNAL_ERROR';
   let message = error.message ?? 'Internal server error';
+  let details = error.details;
   if (error instanceof mongoose.Error.ValidationError || error.name === 'ValidationError') { statusCode = error.statusCode ?? 422; code = error.code ?? 'VALIDATION_FAILED'; }
-  if (error?.code === 11000) { statusCode = 409; code = 'DUPLICATE_RESOURCE'; message = 'A resource with the same unique value already exists'; }
+  if (error?.code === 11000) {
+    const fields = Object.keys(error.keyPattern ?? error.keyValue ?? {});
+    const field = fields[0];
+    const conflictMessages = {
+      email: 'This email is already assigned to another account',
+      phone: 'This phone number is already assigned to another account',
+      plateNumber: 'This vehicle plate is already assigned to another driver',
+      driverCode: 'A generated driver code conflicted; please submit again',
+    };
+    statusCode = 409;
+    code = 'DUPLICATE_RESOURCE';
+    message = conflictMessages[field] ?? 'A resource with the same unique value already exists';
+    details = fields.length ? { fields } : undefined;
+  }
   if (error instanceof mongoose.Error.CastError) { statusCode = 400; code = 'INVALID_ID'; message = 'Invalid resource identifier'; }
   if (error?.name === 'MulterError') { statusCode = 422; code = 'UPLOAD_VALIDATION_FAILED'; }
-  const body = { success: false, message, error: { code, requestId: request.id, ...(error.details ? { details: error.details } : {}) } };
+  const body = { success: false, message, error: { code, requestId: request.id, ...(details ? { details } : {}) } };
   if (process.env.NODE_ENV !== 'production' && statusCode >= 500) body.error.stack = error.stack;
   response.status(statusCode).json(body);
 }

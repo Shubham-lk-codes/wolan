@@ -7,6 +7,7 @@ import multer from 'multer';
 import { AppError } from '@wolan/shared/utils';
 import * as controller from '../controllers/platform.controller.js';
 import { env } from '../config/env.js';
+import { liveMapRouter } from '../modules/live-map/live-map.routes.js';
 
 const asyncRoute = (handler) => (request, response, next) => Promise.resolve(handler(request, response, next)).catch(next);
 const authenticate = createAuthenticate({ secret: env.jwtAccessSecret, issuer: env.jwtIssuer, audience: env.jwtAudience });
@@ -14,6 +15,11 @@ const verifyTrackingWebhook = createWebhookVerifier({ secret: env.trackingWebhoo
 const authLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: true, legacyHeaders: false });
 const idParams = z.object({ id: objectIdSchema }).strict();
 const flexibleBody = z.record(z.string(), z.unknown());
+const driverIdentityAvailabilitySchema = z.object({
+  email: z.email().optional(),
+  phone: z.string().trim().min(7).max(20).optional(),
+  plateNumber: z.string().trim().min(2).max(32).optional(),
+}).strict().refine((value) => value.email || value.phone || value.plateNumber, { message: 'Email, phone, or vehicle plate is required' });
 const allowedUploads = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 10 }, fileFilter: (_request, file, callback) => callback(allowedUploads.has(file.mimetype) ? null : new AppError(`Unsupported file type: ${file.mimetype}`, 422, 'UPLOAD_TYPE_NOT_ALLOWED'), allowedUploads.has(file.mimetype)) });
 
@@ -39,6 +45,8 @@ adminRouter.post('/notifications', authorize('notification:create', 'notificatio
 adminRouter.patch('/notifications/read-all', authorize('notification:update', 'notification:*'), asyncRoute(controller.markAllNotificationsRead));
 adminRouter.patch('/notifications/:id/read', authorize('notification:update', 'notification:*'), validate(idParams, 'params'), asyncRoute(controller.markNotificationRead));
 adminRouter.get('/drivers/:id/workspace', authorize('driver:read', 'driver:*'), validate(idParams, 'params'), asyncRoute(controller.driverWorkspace));
+adminRouter.post('/drivers/check-availability', authorize('driver:create', 'driver:*'), validate(driverIdentityAvailabilitySchema), asyncRoute(controller.driverIdentityAvailability));
+adminRouter.use('/live-map', liveMapRouter);
 
 const crudResources = ['hubs', 'merchants', 'drivers', 'packages', 'trackers', 'payments', 'incidents', 'notifications', 'settings', 'zones', 'reports', 'referrals', 'customers', 'alerts', 'tickets', 'audit'];
 for (const resource of crudResources) {
