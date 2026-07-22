@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { deliveryTiming, mismatchState, stationaryState } from '../src/modules/live-map/live-map.utils.js';
+import { deliveryTiming, mismatchState, stationaryState } from '../src/utils/live-map.utils.js';
 
 const point = (lng, lat) => ({ type: 'Point', coordinates: [lng, lat] });
 

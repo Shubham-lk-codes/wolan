@@ -1,7 +1,7 @@
 import { LIMITS } from '@wolan/shared/constants';
 
 export const ACTIVE_DELIVERY_STATUSES = Object.freeze(['ASSIGNED', 'ACCEPTED', 'PICKED_UP', 'AT_HUB', 'OUT_FOR_DELIVERY']);
-export const MOVEMENT_THRESHOLD_METRES = 25;
+export const MOVEMENT_THRESHOLD_METRES = 25; // Ignores ordinary GPS drift.
 export const DEFAULT_DELIVERY_MINUTES = 45;
 
 const pointCoordinates = (point) => point?.coordinates?.length === 2 ? point.coordinates.map(Number) : null;

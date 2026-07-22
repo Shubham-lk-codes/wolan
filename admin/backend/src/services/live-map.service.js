@@ -6,7 +6,7 @@ import {
   locationDto,
   mismatchState,
   stationaryState,
-} from './live-map.utils.js';
+} from '../utils/live-map.utils.js';
 
 const idOf = (value) => String(value?._id ?? value ?? '');
 
